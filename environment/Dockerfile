@@ -1,8 +1,21 @@
-# hash:sha256:3c09b543c48e44c5101c6214c0ea6b12b9be7764a1be670f4e8152f31acd1e1d
-FROM registry.codeocean.allenneuraldynamics.org/codeocean/jupyterlab:3.0.9-miniconda4.9.2-python3.8-ubuntu20.04
+# hash:sha256:371bf441e56d9d9ffcfd52a9973e12488c057e385eb66336659d37be6fbbac67
+FROM registry.codeocean.allenneuraldynamics.org/codeocean/pytorch-tensorflow-jax:2.1
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
+
+RUN pip install --no-cache-dir \
+    jupyterlab \
+    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git \
+    zarr==2.16.1 \
+    numpy==1.24.4 \
+    scikit-image==0.22.0 \
+    matplotlib==3.8.2 \
+    dask[distributed]==2023.5.0 \
+    dask-image==2023.03.0 \
+    scipy==1.10.1 \
+    cupy-cuda11x \
+    neuroglancer
