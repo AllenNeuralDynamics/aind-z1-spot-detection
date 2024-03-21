@@ -15,11 +15,13 @@ import torch
 import utils
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from neuroglancer import CoordinateSpace
+from aind_large_scale_prediction.generator.utils import concatenate_lazy_data
 
 # from lazy_deskewing import (create_dispim_config, create_dispim_transform, lazy_deskewing)
 from .traditional_detection.puncta_detection_optimized import (
     prune_blobs, traditional_3D_spot_detection)
 from .utils.generate_precomputed_format import generate_precomputed_spots
+from ._shared.types import ArrayLike
 
 # torch.backends.cudnn.benchmark = False
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -75,8 +77,39 @@ def recover_global_position(
     return zyx_global_points_positions
 
 
+def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
+    """
+    Applies the mask to the current data. This
+    should come in the second channel.
+
+    Parameters
+    ----------
+    data: ArrayLike
+        Data to mask.
+    
+    mask: ArrayLike
+        Segmentation mask.
+
+    Returns
+    -------
+    ArrayLike
+        Data after applying masking
+    """
+
+    if mask is None:
+        return data
+
+    orig_dtype = data.dtype
+
+    mask[ mask > 0 ] = 1
+    mask = mask.astype(np.uint8)
+
+    data = data * mask
+
+    return data.astype(orig_dtype)
+
 def z1_puncta_detection(
-    dataset_path: str,
+    dataset_paths: str,
     multiscale: str,
     prediction_chunksize: Tuple[int, ...],
     target_size_mb: int,
@@ -130,7 +163,7 @@ def z1_puncta_detection(
 
     utils.print_system_information(logger)
 
-    logger.info(f"Processing dataset {dataset_path} with mulsticale {multiscale}")
+    logger.info(f"Processing dataset {dataset_paths} with mulsticale {multiscale}")
 
     # Tracking compute resources
     # Subprocess to track used resources
@@ -173,9 +206,14 @@ def z1_puncta_detection(
         pin_memory = False
         multiprocessing.set_start_method("spawn", force=True)
 
-    zarr_data_loader, zarr_dataset = create_data_loader(
-        dataset_path=dataset_path,
+    lazy_data = concatenate_lazy_data(
+        dataset_paths=dataset_paths,
         multiscale=multiscale,
+        concat_axis=-4,  # Concatenation axis
+    )
+
+    zarr_data_loader, zarr_dataset = create_data_loader(
+        lazy_data=lazy_data,
         target_size_mb=target_size_mb,
         prediction_chunksize=prediction_chunksize,
         n_workers=n_workers,
@@ -220,10 +258,14 @@ def z1_puncta_detection(
         # sample_cupy = cupy.asarray(sample.batch_tensor)
         #
         # sample_cupy = cupy.from_dlpack(sample.batch_tensor.cuda())
+
+        masked_data = apply_mask(data=sample.batch_tensor, mask=None)
+
         start_spot_time = time()
         data_block_cupy = cupy.asarray(
-            sample.batch_tensor
-        )  # cupy.from_dlpack(data_block) # [batch_idx, ...]
+            masked_data
+        )
+        # cupy.from_dlpack(data_block) # [batch_idx, ...]
         same_pointer_in_GPU = False  # sample.batch_tensor.__cuda_array_interface__['data'][0] == data_block_cupy.__cuda_array_interface__['data'][0]
         logger.info(
             f"Same in-GPU memory pointer?: {same_pointer_in_GPU} - Image shape: {data_block_cupy.shape} - cupy dtype: {data_block_cupy.dtype} - Device pulled data: {sample.batch_tensor.device} - Device cupy data: {data_block_cupy.device} - super chunk: {sample.batch_super_chunk} - super chunk slice: {sample.batch_internal_slice}"
