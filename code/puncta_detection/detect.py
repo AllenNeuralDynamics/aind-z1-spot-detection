@@ -195,8 +195,6 @@ def execute_worker(
                     axis=0,
                 )
 
-            logger.info(f"Worker [{curr_pid}] - Sending back: {worker_spots.shape}")
-
     return worker_spots
 
 
@@ -395,7 +393,6 @@ def z1_puncta_detection(
 
                     # Wait for all processes to finish
                     worker_spots = [job.get() for job in jobs]
-                    logger.info(f"Worker spots: {worker_spots}")
                     worker_spots = [w for w in worker_spots if w is not None]
 
                     # Setting variables back to init

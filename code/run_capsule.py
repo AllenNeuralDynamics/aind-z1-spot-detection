@@ -37,12 +37,22 @@ def run():
     logger = utils.create_logger(output_log_path=str(output_folder))
 
     # Puncta detection parameters
+    """
     sigma_zyx = [2.0, 1.2, 1.2]
     background_percentage = 25
     pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
     min_zyx = [4, 7, 7]
     filt_thresh = 20
     raw_thresh = 30
+    context_radius = 3
+    radius_confidence = 0.05
+    """
+    sigma_zyx = [0.8, 0.8, 0.8]
+    background_percentage = 25
+    pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
+    min_zyx = [3, 9, 9]
+    filt_thresh = 350
+    raw_thresh = 150
     context_radius = 3
     radius_confidence = 0.05
 
@@ -70,7 +80,7 @@ def run():
         },
     }
 
-    logger.info(f"Puncta detection params: {puncta_params}")
+    logger.info(f"Dataset path: {puncta_params['dataset_path']} - Puncta detection params: {puncta_params}")
 
     z1_puncta_detection(**puncta_params)
 
