@@ -156,7 +156,7 @@ def create_logger(output_log_path: str) -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(LOGS_FILE, "a"),
+            logging.FileHandler(LOGS_FILE, "w"),
         ],
         force=True,
     )

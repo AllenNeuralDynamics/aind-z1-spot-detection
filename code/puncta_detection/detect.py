@@ -12,21 +12,20 @@ from typing import Dict, List, Optional, Tuple
 import cupy
 import numpy as np
 import psutil
-import utils
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import concatenate_lazy_data
 from aind_large_scale_prediction.io import ImageReaderFactory
 from neuroglancer import CoordinateSpace
-from torch import squeeze
 
 from ._shared.types import ArrayLike, PathLike
 # from lazy_deskewing import (create_dispim_config, create_dispim_transform, lazy_deskewing)
 from .traditional_detection.puncta_detection_optimized import (
     prune_blobs, traditional_3D_spot_detection)
+from .utils import utils
 from .utils.generate_precomputed_format import generate_precomputed_spots
 
 
-def recover_global_position(
+def recover_point_global_position(
     super_chunk_slice: List[slice], internal_slice: List[slice], zyx_points: np.array
 ) -> np.array:
     """
@@ -60,6 +59,7 @@ def recover_global_position(
     np.array
         Array with the global position of the points
     """
+
     zyx_super_chunk_start = []
     zyx_internal_slice_start = []
 
@@ -138,9 +138,9 @@ def execute_worker(
         Logging object
     """
     curr_pid = os.getpid()
-    data = squeeze(data)
 
-    if data.shape[-4] == 2:
+    # (Batch, channels, Z, Y, X)
+    if len(data.shape) == 5 and data.shape[-4] == 2:
         data = apply_mask(data=data[:, 0, ...], mask=data[:, 1, ...])
 
     data_block_cupy = cupy.asarray(data)
@@ -148,12 +148,12 @@ def execute_worker(
 
     for batch_idx in range(0, data.shape[0]):
         logger.info(
-            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]}"
+            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape}"
         )
 
         # Making sure CuPy it's running in the correct device
         spots = traditional_3D_spot_detection(
-            data_block=data_block_cupy[batch_idx, ...],
+            data_block=cupy.squeeze(data_block_cupy[batch_idx, ...]),
             background_percentage=spot_parameters["background_percentage"],
             sigma_zyx=spot_parameters["sigma_zyx"],
             pad_size=spot_parameters["pad_size"],
@@ -165,6 +165,7 @@ def execute_worker(
             logger=logger,
         )
 
+        # Adding spots to current batch list
         curr_spots = None
         if spots is None:
             logger.info(
@@ -177,9 +178,9 @@ def execute_worker(
             )
 
             # Getting current spots
-            curr_spots = recover_global_position(
+            curr_spots = recover_point_global_position(
                 super_chunk_slice=batch_super_chunk,
-                internal_slice=batch_internal_slice,
+                internal_slice=batch_internal_slice[batch_idx],
                 zyx_points=spots,
             )
 
@@ -194,6 +195,8 @@ def execute_worker(
                     axis=0,
                 )
 
+            logger.info(f"Worker [{curr_pid}] - Sending back: {worker_spots.shape}")
+
     return worker_spots
 
 
@@ -201,7 +204,7 @@ def _execute_worker(params):
     """
     Worker interface to provide parameters
     """
-    execute_worker(**params)
+    return execute_worker(**params)
 
 
 def z1_puncta_detection(
@@ -317,10 +320,12 @@ def z1_puncta_detection(
             .as_dask_array()
         )
 
+    overlap_prediction_chunksize = (0, 0, 0)
     zarr_data_loader, zarr_dataset = create_data_loader(
         lazy_data=lazy_data,
         target_size_mb=target_size_mb,
         prediction_chunksize=prediction_chunksize,
+        overlap_prediction_chunksize=overlap_prediction_chunksize,
         n_workers=n_workers,
         batch_size=batch_size,
         dtype=np.float32,  # Allowed data type to process with pytorch cuda
@@ -364,7 +369,7 @@ def z1_puncta_detection(
                     f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
                 )
 
-                start_spot_time = time()
+                # start_spot_time = time()
 
                 picked_blocks.append(
                     {
@@ -390,30 +395,32 @@ def z1_puncta_detection(
 
                     # Wait for all processes to finish
                     worker_spots = [job.get() for job in jobs]
+                    logger.info(f"Worker spots: {worker_spots}")
                     worker_spots = [w for w in worker_spots if w is not None]
-
-                    # Concatenate worker spots
-                    worker_spots = np.concatenate(worker_spots, axis=0)
 
                     # Setting variables back to init
                     curr_picked_blocks = 0
                     picked_blocks = []
 
-                    # Adding picked spots to global list of spots
-                    if spots_global_coordinate is None:
-                        spots_global_coordinate = worker_spots.copy()
+                    # Concatenate worker spots
+                    if len(worker_spots):
+                        worker_spots = np.concatenate(worker_spots, axis=0)
 
-                    else:
-                        spots_global_coordinate = np.append(
-                            spots_global_coordinate,
-                            worker_spots,
-                            axis=0,
-                        )
+                        # Adding picked spots to global list of spots
+                        if spots_global_coordinate is None:
+                            spots_global_coordinate = worker_spots.copy()
 
-                end_spot_time = time()
-                logger.info(
-                    f"Time processing batch {i}: {end_spot_time - start_spot_time}"
-                )
+                        else:
+                            spots_global_coordinate = np.append(
+                                spots_global_coordinate,
+                                worker_spots,
+                                axis=0,
+                            )
+
+                # end_spot_time = time()
+                # logger.info(
+                #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
+                # )
 
                 if i + samples_per_iter > total_batches:
                     logger.info(
@@ -435,23 +442,25 @@ def z1_puncta_detection(
         worker_spots = [job.get() for job in jobs]
         worker_spots = [w for w in worker_spots if w is not None]
 
-        # Concatenate worker spots
-        worker_spots = np.concatenate(worker_spots, axis=0)
-
         # Setting variables back to init
         curr_picked_blocks = 0
         picked_blocks = []
 
-        # Adding picked spots to global list of spots
-        if spots_global_coordinate is None:
-            spots_global_coordinate = worker_spots.copy()
+        # Concatenate worker spots
+        if len(worker_spots):
+            # Concatenate worker spots
+            worker_spots = np.concatenate(worker_spots, axis=0)
 
-        else:
-            spots_global_coordinate = np.append(
-                spots_global_coordinate,
-                worker_spots,
-                axis=0,
-            )
+            # Adding picked spots to global list of spots
+            if spots_global_coordinate is None:
+                spots_global_coordinate = worker_spots.copy()
+
+            else:
+                spots_global_coordinate = np.append(
+                    spots_global_coordinate,
+                    worker_spots,
+                    axis=0,
+                )
 
     end_time = time()
 

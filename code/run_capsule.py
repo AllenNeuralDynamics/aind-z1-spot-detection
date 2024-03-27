@@ -27,7 +27,7 @@ def run():
     # BUCKET_NAME = "aind-open-data"
     # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
     IMAGE_PATH = (
-        "HCR_BL6-000_2023-06-07_00-00-00_fused_2024-02-09_15-52-18/channel_2.zarr"
+        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_2.zarr"
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
@@ -49,6 +49,7 @@ def run():
     # Data loader params
     puncta_params = {
         "dataset_path": DATA_PATH,
+        "segmentation_mask_path": None,
         "multiscale": "0",
         "prediction_chunksize": (128, 128, 128),
         "target_size_mb": 1024,
