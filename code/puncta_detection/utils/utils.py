@@ -8,7 +8,7 @@ import os
 import platform
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import psutil
@@ -156,7 +156,7 @@ def create_logger(output_log_path: str) -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(LOGS_FILE, "a"),
+            logging.FileHandler(LOGS_FILE, "w"),
         ],
         force=True,
     )
@@ -336,3 +336,50 @@ def create_folder(dest_dir: str, verbose: Optional[bool] = False) -> None:
         except OSError as e:
             if e.errno != os.errno.EEXIST:
                 raise
+
+
+def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dict:
+    """
+    Parses the zarr metadata and retrieves
+    the metadata we need in the correct format.
+
+    Parameters
+    ----------
+    metadata: Dict
+        Metadata dictionary that contains ".zattrs" and
+        ".zarray"
+
+    multiscale: Optional[str]
+        Multiscale we're retieving the metadata for.
+        Default: None
+
+    Returns
+    -------
+    Dict
+        Dictionary with the metadata we need
+    """
+    parsed_metadata = {"axes": {}}
+    zattrs = metadata.get(".zattrs")
+    # zarray = metadata.get('.zarray')
+
+    if zattrs is not None:
+        multiscales = zattrs.get("multiscales")[0]
+        axes = multiscales.get("axes")
+        datasets = multiscales.get("datasets")
+
+        dataset_res = None
+
+        for d in datasets:
+            if d["path"] == multiscale:
+                dataset_res = d["coordinateTransformations"][0]["scale"]
+                break
+
+        for idx in range(len(axes)):
+            ax = axes[idx]
+            parsed_metadata["axes"][ax["name"]] = {
+                "unit": ax.get("unit"),
+                "type": ax.get("type"),
+                "scale": dataset_res[idx],
+            }
+
+    return parsed_metadata

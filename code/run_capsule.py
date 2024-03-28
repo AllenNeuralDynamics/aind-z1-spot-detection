@@ -27,36 +27,63 @@ def run():
     # BUCKET_NAME = "aind-open-data"
     # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
     IMAGE_PATH = (
-        "HCR_BL6-000_2023-06-07_00-00-00_fused_2024-02-09_15-52-18/channel_2.zarr"
+        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_2.zarr"
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
+    SEGMENTATION_PATH = "../data/upscaled_masks_R0_01.zarr"  # f"{DATA_FOLDER}/upscaled_masks_R0_01.zarr"
     # If using the bucket path directly, provide credentials to the capsule
     # f"s3://{BUCKET_NAME}/{IMAGE_PATH}"
 
     logger = utils.create_logger(output_log_path=str(output_folder))
 
+    # Puncta detection parameters
+    """
+    sigma_zyx = [2.0, 1.2, 1.2]
+    background_percentage = 25
+    pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
+    min_zyx = [4, 7, 7]
+    filt_thresh = 20
+    raw_thresh = 30
+    context_radius = 3
+    radius_confidence = 0.05
+    """
+    sigma_zyx = [0.8, 0.8, 0.8]
+    background_percentage = 25
+    pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
+    min_zyx = [3, 9, 9]
+    filt_thresh = 100
+    raw_thresh = 150
+    context_radius = 3
+    radius_confidence = 0.05
+
     # Data loader params
     puncta_params = {
         "dataset_path": DATA_PATH,
+        "segmentation_mask_path": SEGMENTATION_PATH,
         "multiscale": "0",
-        "prediction_chunksize": (128, 128, 128),  # (256, 256, 256),
-        "target_size_mb": 1024,  # 2048,#3072,
+        "prediction_chunksize": (128, 128, 128),
+        "target_size_mb": 1024,
         "n_workers": 16,
         "batch_size": 1,
         "output_folder": output_folder,
         "logger": logger,
         "super_chunksize": None,
+        "spot_parameters": {
+            "sigma_zyx": sigma_zyx,
+            "background_percentage": background_percentage,
+            "pad_size": pad_size,
+            "min_zyx": min_zyx,
+            "filt_thresh": filt_thresh,
+            "raw_thresh": raw_thresh,
+            "context_radius": context_radius,
+            "radius_confidence": radius_confidence,
+        },
     }
 
-    co_cpus = int(utils.get_code_ocean_cpu_limit())
-
-    if puncta_params.get("n_workers") > co_cpus:
-        raise ValueError(
-            f"Provided workers {puncta_params.get('n_workers')} > current workers {co_cpus}"
-        )
-
-    logger.info(f"Puncta detection params: {puncta_params}")
+    logger.info(
+        f"Dataset path: {puncta_params['dataset_path']} - Puncta detection params: {puncta_params}"
+    )
 
     z1_puncta_detection(**puncta_params)
 

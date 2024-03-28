@@ -4,28 +4,30 @@ Large-scale puncta detection using single GPU
 
 import logging
 import multiprocessing
+import os
 # from functools import partial
 from time import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cupy
 import numpy as np
 import psutil
 import torch
-import utils
 from aind_large_scale_prediction.generator.dataset import create_data_loader
+from aind_large_scale_prediction.generator.utils import (
+    concatenate_lazy_data, recover_global_position)
+from aind_large_scale_prediction.io import ImageReaderFactory
 from neuroglancer import CoordinateSpace
 
+from ._shared.types import ArrayLike, PathLike
 # from lazy_deskewing import (create_dispim_config, create_dispim_transform, lazy_deskewing)
 from .traditional_detection.puncta_detection_optimized import (
     prune_blobs, traditional_3D_spot_detection)
+from .utils import utils
 from .utils.generate_precomputed_format import generate_precomputed_spots
 
-# torch.backends.cudnn.benchmark = False
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-
-def recover_global_position(
+def recover_point_global_position(
     super_chunk_slice: List[slice], internal_slice: List[slice], zyx_points: np.array
 ) -> np.array:
     """
@@ -59,6 +61,7 @@ def recover_global_position(
     np.array
         Array with the global position of the points
     """
+
     zyx_super_chunk_start = []
     zyx_internal_slice_start = []
 
@@ -75,23 +78,186 @@ def recover_global_position(
     return zyx_global_points_positions
 
 
+def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
+    """
+    Applies the mask to the current data. This
+    should come in the second channel.
+
+    Parameters
+    ----------
+    data: ArrayLike
+        Data to mask.
+
+    mask: ArrayLike
+        Segmentation mask.
+
+    Returns
+    -------
+    ArrayLike
+        Data after applying masking
+    """
+
+    if mask is None:
+        return data
+
+    orig_dtype = data.dtype
+
+    mask[mask > 0] = 1
+    if isinstance(mask, torch.Tensor):
+        mask = mask.to(torch.uint8)
+
+    else:
+        mask = mask.astype(np.uint8)
+
+    data = data * mask
+
+    if isinstance(data, torch.Tensor):
+        data = data.to(orig_dtype)
+
+    else:
+        data = data.astype(orig_dtype)
+
+    return data
+
+
+def execute_worker(
+    data: ArrayLike,
+    batch_super_chunk: Tuple[slice],
+    batch_internal_slice: Tuple[slice],
+    spot_parameters: Dict,
+    logger: logging.Logger,
+) -> np.array:
+    """
+    Function that executes each worker. It takes
+    the combined gradients and follows the flows.
+
+    Parameters
+    ----------
+    data: ArrayLike
+        Data to process.
+
+    batch_super_chunk: Tuple[slice]
+        Slices of the super chunk loaded in shared memory.
+
+    batch_internal_slice: Tuple[slice]
+        Internal slice of the current chunk of data. This
+        is a local coordinate system based on the super chunk.
+
+    spot_parameters: Dict
+        Spot detection parameters.
+
+    logger: logging.Logger
+        Logging object
+    """
+    curr_pid = os.getpid()
+
+    # (Batch, channels, Z, Y, X)
+    if len(data.shape) == 5 and data.shape[-4] == 2:
+        data = apply_mask(data=data[:, 0, ...], mask=data[:, 1, ...])
+
+    data_block_cupy = cupy.asarray(data)
+    worker_spots = None
+
+    for batch_idx in range(0, data.shape[0]):
+        curr_block = cupy.squeeze(data_block_cupy[batch_idx, ...])
+        logger.info(
+            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape} - Current block: {curr_block.shape}"
+        )
+
+        # Making sure CuPy it's running in the correct device
+        spots = traditional_3D_spot_detection(
+            data_block=curr_block,
+            background_percentage=spot_parameters["background_percentage"],
+            sigma_zyx=spot_parameters["sigma_zyx"],
+            pad_size=spot_parameters["pad_size"],
+            min_zyx=spot_parameters["min_zyx"],
+            filt_thresh=spot_parameters["filt_thresh"],
+            raw_thresh=spot_parameters["raw_thresh"],
+            context_radius=spot_parameters["context_radius"],
+            radius_confidence=spot_parameters["radius_confidence"],
+            logger=logger,
+        )
+
+        # Adding spots to current batch list
+        curr_spots = None
+        if spots is None:
+            logger.info(
+                f"Worker [{curr_pid}] - No spots found in inner batch {batch_idx}"
+            )
+
+        else:
+            logger.info(
+                f"Worker [{curr_pid}] - Found {len(spots)} spots for in inner batch {batch_idx}"
+            )
+
+            # Recover global position of internal chunk
+            (
+                global_coord_pos,
+                global_coord_positions_start,
+                global_coord_positions_end,
+            ) = recover_global_position(
+                super_chunk_slice=batch_super_chunk,
+                internal_slices=batch_internal_slice,
+            )
+
+            # Getting current spots
+            # curr_spots = recover_point_global_position(
+            #     super_chunk_slice=batch_super_chunk[-3:],
+            #     internal_slice=batch_internal_slice[batch_idx][-3:],
+            #     zyx_points=spots,
+            # )
+
+            # print(f"Worker: {curr_pid} - arr: {global_coord_positions_start}")
+            # print(f"Worker: {curr_pid} - arr: {np.array(global_coord_positions_start)[:, -3:]}")
+
+            curr_spots = np.array(global_coord_positions_start)[:, -3:] + np.array(
+                spots
+            )
+
+            logger.info(
+                f"Worker {os.getpid()}: Batch {batch_super_chunk} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - Global Coords start: {global_coord_positions_start} - points before: {spots[:10]} {spots.shape} - points after: {curr_spots[:10]} {curr_spots.shape}"
+            )
+
+            # Adding spots to the worker batch
+            if worker_spots is None:
+                worker_spots = curr_spots.copy()
+
+            else:
+                worker_spots = np.append(
+                    worker_spots,
+                    curr_spots,
+                    axis=0,
+                )
+
+    return worker_spots
+
+
+def _execute_worker(params):
+    """
+    Worker interface to provide parameters
+    """
+    return execute_worker(**params)
+
+
 def z1_puncta_detection(
-    dataset_path: str,
+    dataset_path: PathLike,
     multiscale: str,
     prediction_chunksize: Tuple[int, ...],
     target_size_mb: int,
     n_workers: int,
     batch_size: 96,
     output_folder: str,
+    spot_parameters: Dict,
     logger: logging.Logger,
     super_chunksize: Optional[Tuple[int, ...]] = None,
+    segmentation_mask_path: Optional[PathLike] = None,
 ):
     """
     Chunked puncta detection
 
     Parameters
     ----------
-    dataset_path: str
+    dataset_path: PathLike
         Path where the zarr dataset is stored. It could
         be a local path or in a S3 path.
 
@@ -123,7 +289,16 @@ def z1_puncta_detection(
         Super chunk size that will be in memory at a
         time from the raw data. If provided, then
         target_size_mb is ignored. Default: None
+
+    segmentation_mask_path: Optional[PathLike]
+        Path where the segmentation mask is stored. It could
+        be a local path or in a S3 path.
+        Default None
     """
+    co_cpus = int(utils.get_code_ocean_cpu_limit())
+
+    if n_workers > co_cpus:
+        raise ValueError(f"Provided workers {n_workers} > current workers {co_cpus}")
 
     logger.info(f"{20*'='} Running puncta detection {20*'='}")
     logger.info(f"Output folder: {output_folder}")
@@ -151,17 +326,6 @@ def z1_puncta_detection(
     profile_process.daemon = True
     profile_process.start()
 
-    """
-    # lazy preprocessing
-    partial_lazy_deskewing = partial(
-        lazy_deskewing,
-        multiscale=multiscale,
-        camera=camera,
-        make_isotropy_voxels=False,
-        logger=logger,
-    )
-    """
-
     logger.info("Creating chunked data loader")
     shm_memory = psutil.virtual_memory()
     logger.info(f"Shared memory information: {shm_memory}")
@@ -173,11 +337,48 @@ def z1_puncta_detection(
         pin_memory = False
         multiprocessing.set_start_method("spawn", force=True)
 
+    overlap_prediction_chunksize = (0, 0, 0)
+    if segmentation_mask_path:
+        logger.info(f"Using segmentation mask in {segmentation_mask_path}")
+        lazy_data = concatenate_lazy_data(
+            dataset_paths=[dataset_path, segmentation_mask_path],
+            multiscales=[multiscale, "."],
+            concat_axis=-4,
+        )
+        overlap_prediction_chunksize = (0, 0, 0, 0)
+        prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
+
+        logger.info(
+            f"Segmentation mask provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+        )
+
+    else:
+        # No segmentation mask
+        lazy_data = (
+            ImageReaderFactory()
+            .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)
+            .as_dask_array()
+        )
+
+    image_metadata = (
+        ImageReaderFactory()
+        .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)
+        .metadata()
+    )
+
+    logger.info(f"Full image metadata: {image_metadata}")
+
+    image_metadata = utils.parse_zarr_metadata(
+        metadata=image_metadata, multiscale=multiscale
+    )
+
+    logger.info(f"Filtered Image metadata: {image_metadata}")
+
     zarr_data_loader, zarr_dataset = create_data_loader(
-        dataset_path=dataset_path,
-        multiscale=multiscale,
+        lazy_data=lazy_data,
         target_size_mb=target_size_mb,
         prediction_chunksize=prediction_chunksize,
+        overlap_prediction_chunksize=overlap_prediction_chunksize,
         n_workers=n_workers,
         batch_size=batch_size,
         dtype=np.float32,  # Allowed data type to process with pytorch cuda
@@ -191,19 +392,9 @@ def z1_puncta_detection(
         locked_array=False,
     )
 
-    logger.info("Running puncta in chunked data")
+    logger.info("Running puncta detection in chunked data")
 
     start_time = time()
-
-    # CH 2
-    sigma_zyx = [2.0, 1.2, 1.2]
-    background_percentage = 25
-    pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
-    min_zyx = [4, 7, 7]
-    filt_thresh = 20
-    raw_thresh = 30
-    context_radius = 3
-    radius_confidence = 0.05
 
     total_batches = np.prod(zarr_dataset.lazy_data.shape) / (
         np.prod(zarr_dataset.prediction_chunksize) * batch_size
@@ -212,98 +403,143 @@ def z1_puncta_detection(
     logger.info(f"Number of batches: {total_batches}")
     spots_global_coordinate = None
 
-    for i, sample in enumerate(zarr_data_loader):
-        logger.info(
-            f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
-        )
+    # Setting exec workers to CO CPUs
+    exec_n_workers = co_cpus
 
-        # sample_cupy = cupy.asarray(sample.batch_tensor)
-        #
-        # sample_cupy = cupy.from_dlpack(sample.batch_tensor.cuda())
-        start_spot_time = time()
-        data_block_cupy = cupy.asarray(
-            sample.batch_tensor
-        )  # cupy.from_dlpack(data_block) # [batch_idx, ...]
-        same_pointer_in_GPU = False  # sample.batch_tensor.__cuda_array_interface__['data'][0] == data_block_cupy.__cuda_array_interface__['data'][0]
-        logger.info(
-            f"Same in-GPU memory pointer?: {same_pointer_in_GPU} - Image shape: {data_block_cupy.shape} - cupy dtype: {data_block_cupy.dtype} - Device pulled data: {sample.batch_tensor.device} - Device cupy data: {data_block_cupy.device} - super chunk: {sample.batch_super_chunk} - super chunk slice: {sample.batch_internal_slice}"
-        )
-        spots = None
+    # Create a pool of processes
+    pool = multiprocessing.Pool(processes=exec_n_workers)
 
-        with cupy.cuda.Device(device=device):
-            with cupy.cuda.Stream.null:
-                for batch_idx in range(0, sample.batch_tensor.shape[0]):
+    # Variables for multiprocessing
+    picked_blocks = []
+    curr_picked_blocks = 0
+
+    logger.info(f"Number of workers processing data: {exec_n_workers}")
+
+    with cupy.cuda.Device(device=device):
+        with cupy.cuda.Stream.null:
+            for i, sample in enumerate(zarr_data_loader):
+                logger.info(
+                    f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+                )
+
+                # start_spot_time = time()
+
+                picked_blocks.append(
+                    {
+                        "data": sample.batch_tensor,
+                        "batch_super_chunk": sample.batch_super_chunk[0],
+                        "batch_internal_slice": sample.batch_internal_slice,
+                        "spot_parameters": spot_parameters,
+                        "logger": logger,
+                    }
+                )
+                curr_picked_blocks += 1
+
+                if curr_picked_blocks == exec_n_workers:
+                    # Assigning blocks to execution workers
+                    jobs = [
+                        pool.apply_async(_execute_worker, args=(picked_block,))
+                        for picked_block in picked_blocks
+                    ]
+
                     logger.info(
-                        f"Processing inner batch {batch_idx} out of {sample.batch_tensor.shape[0]} of batch {i}"
-                    )
-                    # dlpack_sample = to_dlpack(data_block)
-                    # Converting to CuPy Array
-
-                    # Making sure CuPy it's running in the correct device
-                    spots = traditional_3D_spot_detection(
-                        data_block=data_block_cupy[batch_idx, ...],
-                        background_percentage=background_percentage,
-                        sigma_zyx=sigma_zyx,
-                        pad_size=pad_size,
-                        min_zyx=min_zyx,
-                        filt_thresh=filt_thresh,
-                        raw_thresh=raw_thresh,
-                        context_radius=context_radius,
-                        radius_confidence=radius_confidence,
-                        logger=logger,
+                        f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
                     )
 
-                    if spots is None:
-                        logger.info(
-                            f"No spots found in inner batch {batch_idx} from outer batch {i}"
-                        )
+                    # Wait for all processes to finish
+                    worker_spots = [job.get() for job in jobs]
+                    worker_spots = [w for w in worker_spots if w is not None]
 
-                    else:
-                        logger.info(
-                            f"{len(spots)} spots for in inner batch {batch_idx} from outer batch {i}"
-                        )
-                        spots_global_coordinate_current = recover_global_position(
-                            super_chunk_slice=sample.batch_super_chunk[0],
-                            internal_slice=sample.batch_internal_slice[0],
-                            zyx_points=spots,
-                        )
+                    # Setting variables back to init
+                    curr_picked_blocks = 0
+                    picked_blocks = []
 
+                    # Concatenate worker spots
+                    if len(worker_spots):
+                        worker_spots = np.concatenate(worker_spots, axis=0)
+
+                        # Adding picked spots to global list of spots
                         if spots_global_coordinate is None:
-                            spots_global_coordinate = (
-                                spots_global_coordinate_current.copy()
-                            )
+                            spots_global_coordinate = worker_spots.copy()
 
                         else:
                             spots_global_coordinate = np.append(
                                 spots_global_coordinate,
-                                spots_global_coordinate_current,
+                                worker_spots,
                                 axis=0,
                             )
 
-        end_spot_time = time()
-        logger.info(f"Time processing batch {i}: {end_spot_time - start_spot_time}")
+                # end_spot_time = time()
+                # logger.info(
+                #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
+                # )
 
-        if i + samples_per_iter > total_batches:
-            logger.info(
-                f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
-            )
-            break
+                if i + samples_per_iter > total_batches:
+                    logger.info(
+                        f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
+                    )
+                    break
+
+    if curr_picked_blocks != 0:
+        logger.info(f"Blocks not processed inside of loop: {curr_picked_blocks}")
+        # Assigning blocks to execution workers
+        jobs = [
+            pool.apply_async(_execute_worker, args=(picked_block,))
+            for picked_block in picked_blocks
+        ]
+
+        logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
+
+        # Wait for all processes to finish
+        worker_spots = [job.get() for job in jobs]
+        worker_spots = [w for w in worker_spots if w is not None]
+
+        # Setting variables back to init
+        curr_picked_blocks = 0
+        picked_blocks = []
+
+        # Concatenate worker spots
+        if len(worker_spots):
+            # Concatenate worker spots
+            worker_spots = np.concatenate(worker_spots, axis=0)
+
+            # Adding picked spots to global list of spots
+            if spots_global_coordinate is None:
+                spots_global_coordinate = worker_spots.copy()
+
+            else:
+                spots_global_coordinate = np.append(
+                    spots_global_coordinate,
+                    worker_spots,
+                    axis=0,
+                )
 
     end_time = time()
 
+    # Final prunning, might be spots in boundaries where spots where splitted
     start_final_prunning_time = time()
     spots_global_coordinate_prunned = prune_blobs(
-        blobs_array=spots_global_coordinate, distance=min_zyx[-1] + radius_confidence
+        blobs_array=spots_global_coordinate,
+        distance=spot_parameters["min_zyx"][-1] + spot_parameters["radius_confidence"],
     )
     end_final_prunning_time = time()
+
     logger.info(
         f"Time taken for final prunning {end_final_prunning_time - start_final_prunning_time} before: {len(spots_global_coordinate)} After: {len(spots_global_coordinate_prunned)}"
     )
 
     # TODO add chunked precomputed format for points with multiscales
     coord_space = CoordinateSpace(
-        names=["z", "y", "x"], units=["m", "m", "m"], scales=["5e-7", "5e-7", "5e-7"]
+        names=["z", "y", "x"],
+        units=["um", "um", "um"],
+        scales=[
+            image_metadata["axes"]["z"]["scale"],
+            image_metadata["axes"]["y"]["scale"],
+            image_metadata["axes"]["x"]["scale"],
+        ],
     )
+
+    logger.info(f"Neuroglancer coordinate space: {coord_space}")
     generate_precomputed_spots(
         spots=spots_global_coordinate_prunned,
         path=f"{output_folder}/precomputed",

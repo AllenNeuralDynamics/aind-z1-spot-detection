@@ -16,7 +16,8 @@ from typing import Dict, List, Union
 
 import neuroglancer
 import numpy as np
-import utils
+
+from . import utils
 
 # IO types
 PathLike = Union[str, Path]
