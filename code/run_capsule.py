@@ -31,6 +31,7 @@ def run():
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
+    SEGMENTATION_PATH = "../data/upscaled_masks_R0_01.zarr"  # f"{DATA_FOLDER}/upscaled_masks_R0_01.zarr"
     # If using the bucket path directly, provide credentials to the capsule
     # f"s3://{BUCKET_NAME}/{IMAGE_PATH}"
 
@@ -51,7 +52,7 @@ def run():
     background_percentage = 25
     pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
     min_zyx = [3, 9, 9]
-    filt_thresh = 350
+    filt_thresh = 100
     raw_thresh = 150
     context_radius = 3
     radius_confidence = 0.05
@@ -59,7 +60,7 @@ def run():
     # Data loader params
     puncta_params = {
         "dataset_path": DATA_PATH,
-        "segmentation_mask_path": None,
+        "segmentation_mask_path": SEGMENTATION_PATH,
         "multiscale": "0",
         "prediction_chunksize": (128, 128, 128),
         "target_size_mb": 1024,
@@ -80,7 +81,9 @@ def run():
         },
     }
 
-    logger.info(f"Dataset path: {puncta_params['dataset_path']} - Puncta detection params: {puncta_params}")
+    logger.info(
+        f"Dataset path: {puncta_params['dataset_path']} - Puncta detection params: {puncta_params}"
+    )
 
     z1_puncta_detection(**puncta_params)
 

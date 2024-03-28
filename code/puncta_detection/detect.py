@@ -12,8 +12,10 @@ from typing import Dict, List, Optional, Tuple
 import cupy
 import numpy as np
 import psutil
+import torch
 from aind_large_scale_prediction.generator.dataset import create_data_loader
-from aind_large_scale_prediction.generator.utils import concatenate_lazy_data
+from aind_large_scale_prediction.generator.utils import (
+    concatenate_lazy_data, recover_global_position)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from neuroglancer import CoordinateSpace
 
@@ -101,11 +103,21 @@ def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
     orig_dtype = data.dtype
 
     mask[mask > 0] = 1
-    mask = mask.astype(np.uint8)
+    if isinstance(mask, torch.Tensor):
+        mask = mask.to(torch.uint8)
+
+    else:
+        mask = mask.astype(np.uint8)
 
     data = data * mask
 
-    return data.astype(orig_dtype)
+    if isinstance(data, torch.Tensor):
+        data = data.to(orig_dtype)
+
+    else:
+        data = data.astype(orig_dtype)
+
+    return data
 
 
 def execute_worker(
@@ -147,13 +159,14 @@ def execute_worker(
     worker_spots = None
 
     for batch_idx in range(0, data.shape[0]):
+        curr_block = cupy.squeeze(data_block_cupy[batch_idx, ...])
         logger.info(
-            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape}"
+            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape} - Current block: {curr_block.shape}"
         )
 
         # Making sure CuPy it's running in the correct device
         spots = traditional_3D_spot_detection(
-            data_block=cupy.squeeze(data_block_cupy[batch_idx, ...]),
+            data_block=curr_block,
             background_percentage=spot_parameters["background_percentage"],
             sigma_zyx=spot_parameters["sigma_zyx"],
             pad_size=spot_parameters["pad_size"],
@@ -177,11 +190,32 @@ def execute_worker(
                 f"Worker [{curr_pid}] - Found {len(spots)} spots for in inner batch {batch_idx}"
             )
 
-            # Getting current spots
-            curr_spots = recover_point_global_position(
+            # Recover global position of internal chunk
+            (
+                global_coord_pos,
+                global_coord_positions_start,
+                global_coord_positions_end,
+            ) = recover_global_position(
                 super_chunk_slice=batch_super_chunk,
-                internal_slice=batch_internal_slice[batch_idx],
-                zyx_points=spots,
+                internal_slices=batch_internal_slice,
+            )
+
+            # Getting current spots
+            # curr_spots = recover_point_global_position(
+            #     super_chunk_slice=batch_super_chunk[-3:],
+            #     internal_slice=batch_internal_slice[batch_idx][-3:],
+            #     zyx_points=spots,
+            # )
+
+            # print(f"Worker: {curr_pid} - arr: {global_coord_positions_start}")
+            # print(f"Worker: {curr_pid} - arr: {np.array(global_coord_positions_start)[:, -3:]}")
+
+            curr_spots = np.array(global_coord_positions_start)[:, -3:] + np.array(
+                spots
+            )
+
+            logger.info(
+                f"Worker {os.getpid()}: Batch {batch_super_chunk} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - Global Coords start: {global_coord_positions_start} - points before: {spots[:10]} {spots.shape} - points after: {curr_spots[:10]} {curr_spots.shape}"
             )
 
             # Adding spots to the worker batch
@@ -303,22 +337,43 @@ def z1_puncta_detection(
         pin_memory = False
         multiprocessing.set_start_method("spawn", force=True)
 
+    overlap_prediction_chunksize = (0, 0, 0)
     if segmentation_mask_path:
         logger.info(f"Using segmentation mask in {segmentation_mask_path}")
         lazy_data = concatenate_lazy_data(
             dataset_paths=[dataset_path, segmentation_mask_path],
-            multiscale=multiscale,
+            multiscales=[multiscale, "."],
             concat_axis=-4,
+        )
+        overlap_prediction_chunksize = (0, 0, 0, 0)
+        prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
+
+        logger.info(
+            f"Segmentation mask provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
         )
 
     else:
+        # No segmentation mask
         lazy_data = (
             ImageReaderFactory()
             .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)
             .as_dask_array()
         )
 
-    overlap_prediction_chunksize = (0, 0, 0)
+    image_metadata = (
+        ImageReaderFactory()
+        .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)
+        .metadata()
+    )
+
+    logger.info(f"Full image metadata: {image_metadata}")
+
+    image_metadata = utils.parse_zarr_metadata(
+        metadata=image_metadata, multiscale=multiscale
+    )
+
+    logger.info(f"Filtered Image metadata: {image_metadata}")
+
     zarr_data_loader, zarr_dataset = create_data_loader(
         lazy_data=lazy_data,
         target_size_mb=target_size_mb,
@@ -337,7 +392,7 @@ def z1_puncta_detection(
         locked_array=False,
     )
 
-    logger.info("Running puncta in chunked data")
+    logger.info("Running puncta detection in chunked data")
 
     start_time = time()
 
@@ -475,8 +530,16 @@ def z1_puncta_detection(
 
     # TODO add chunked precomputed format for points with multiscales
     coord_space = CoordinateSpace(
-        names=["z", "y", "x"], units=["m", "m", "m"], scales=["5e-7", "5e-7", "5e-7"]
+        names=["z", "y", "x"],
+        units=["um", "um", "um"],
+        scales=[
+            image_metadata["axes"]["z"]["scale"],
+            image_metadata["axes"]["y"]["scale"],
+            image_metadata["axes"]["x"]["scale"],
+        ],
     )
+
+    logger.info(f"Neuroglancer coordinate space: {coord_space}")
     generate_precomputed_spots(
         spots=spots_global_coordinate_prunned,
         path=f"{output_folder}/precomputed",
