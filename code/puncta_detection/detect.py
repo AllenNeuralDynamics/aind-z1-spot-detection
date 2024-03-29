@@ -548,6 +548,9 @@ def z1_puncta_detection(
 
     logger.info(f"Processing time: {end_time - start_time} seconds")
 
+    # Saving spots
+    np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
+
     # Getting tracked resources and plotting image
     utils.stop_child_process(profile_process)
 
