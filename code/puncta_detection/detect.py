@@ -27,57 +27,6 @@ from .utils import utils
 from .utils.generate_precomputed_format import generate_precomputed_spots
 
 
-def recover_point_global_position(
-    super_chunk_slice: List[slice], internal_slice: List[slice], zyx_points: np.array
-) -> np.array:
-    """
-    Recovers global position of local point
-    positions generated due to the chunked
-    prediction.
-
-    Parameters
-    ----------
-    super_chunk_slice: List[slice]
-        Super chunk location where the zyx points
-        were detected. We divide the entire zarr
-        volume in super chunk which then are sent
-        to the scheduler to pull internal chunks.
-
-    internal_slice: List[slice]
-        List of internal chunks from the super chunks
-        that were pulled from the entire zarr volume.
-        This list has a one-one correspondence with the
-        super chunk list. This means that position 0
-        in the super chunk list corresponds to all the
-        internal chunks that were served and appear in
-        position 0 of this list.
-
-    zyx_points: np.array
-        Identified ZYX positions in the entire zarr
-        volume.
-
-    Returns
-    -------
-    np.array
-        Array with the global position of the points
-    """
-
-    zyx_super_chunk_start = []
-    zyx_internal_slice_start = []
-
-    for idx in range(len(internal_slice)):
-        zyx_super_chunk_start.append(super_chunk_slice[idx].start)
-        zyx_internal_slice_start.append(internal_slice[idx].start)
-
-    zyx_global_points_positions = (
-        np.array(zyx_super_chunk_start)
-        + np.array(zyx_internal_slice_start)
-        + np.array(zyx_points)
-    )
-
-    return zyx_global_points_positions
-
-
 def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
     """
     Applies the mask to the current data. This
@@ -148,16 +97,24 @@ def execute_worker(
 
     logger: logging.Logger
         Logging object
+
+    Returns
+    -------
+    Tuple[ArrayLike, ArrayLike]
+        Array with the global location of the identified points.
     """
     curr_pid = os.getpid()
-
+    mask = None
     # (Batch, channels, Z, Y, X)
     if len(data.shape) == 5 and data.shape[-4] == 2:
-        data = apply_mask(data=data[:, 0, ...], mask=data[:, 1, ...])
+        mask = data[:, 1, ...]
+        data = data[:, 0, ...]
+        data = apply_mask(data=data, mask=mask.detach().clone())
 
     data_block_cupy = cupy.asarray(data)
-    worker_spots = None
+    global_worker_spots = None
 
+    # Processing batch
     for batch_idx in range(0, data.shape[0]):
         curr_block = cupy.squeeze(data_block_cupy[batch_idx, ...])
         logger.info(
@@ -200,41 +157,47 @@ def execute_worker(
                 internal_slices=batch_internal_slice,
             )
 
-            # Getting current spots
-            # curr_spots = recover_point_global_position(
-            #     super_chunk_slice=batch_super_chunk[-3:],
-            #     internal_slice=batch_internal_slice[batch_idx][-3:],
-            #     zyx_points=spots,
-            # )
+            if mask is not None:
+                # Getting spots IDs, adding mask ID to the spot as extra value at the end
+                mask = torch.squeeze(mask)
+                mask_ids = np.expand_dims(
+                    mask[spots[:, 0], spots[:, 1], spots[:, 2]], axis=0
+                )
+                spots = np.append(spots.T, mask_ids, axis=0).T
 
-            # print(f"Worker: {curr_pid} - arr: {global_coord_positions_start}")
-            # print(f"Worker: {curr_pid} - arr: {np.array(global_coord_positions_start)[:, -3:]}")
-
-            curr_spots = np.array(global_coord_positions_start)[:, -3:] + np.array(
-                spots
-            )
+            curr_spots = spots.copy()
+            # Converting to global coordinates, only to ZYX position, leaving mask ID if exists
+            curr_spots[:, :3] = np.array(global_coord_positions_start)[
+                :, -3:
+            ] + np.array(spots[:, :3])
 
             logger.info(
-                f"Worker {os.getpid()}: Batch {batch_super_chunk} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - Global Coords start: {global_coord_positions_start} - points before: {spots[:10]} {spots.shape} - points after: {curr_spots[:10]} {curr_spots.shape}"
+                f"Worker {os.getpid()}: Batch {batch_super_chunk} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - Global Coords start: {global_coord_positions_start}"
             )
 
             # Adding spots to the worker batch
-            if worker_spots is None:
-                worker_spots = curr_spots.copy()
+            if global_worker_spots is None:
+                global_worker_spots = curr_spots.copy()
 
             else:
-                worker_spots = np.append(
-                    worker_spots,
+                global_worker_spots = np.append(
+                    global_worker_spots,
                     curr_spots,
                     axis=0,
                 )
 
-    return worker_spots
+    return global_worker_spots
 
 
-def _execute_worker(params):
+def _execute_worker(params: Dict):
     """
     Worker interface to provide parameters
+
+    Parameters
+    ----------
+    params: Dict
+        Dictionary with the parameters to provide
+        to the execution function.
     """
     return execute_worker(**params)
 
@@ -402,6 +365,7 @@ def z1_puncta_detection(
     samples_per_iter = n_workers * batch_size
     logger.info(f"Number of batches: {total_batches}")
     spots_global_coordinate = None
+    spots_per_mask_id = {}
 
     # Setting exec workers to CO CPUs
     exec_n_workers = co_cpus
@@ -446,26 +410,34 @@ def z1_puncta_detection(
                         f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
                     )
 
+                    global_workers_spots = []
+
                     # Wait for all processes to finish
-                    worker_spots = [job.get() for job in jobs]
-                    worker_spots = [w for w in worker_spots if w is not None]
+                    for job in jobs:
+                        worker_response = job.get()
+
+                        if worker_response is not None:
+                            # Global coordinate points
+                            global_workers_spots.append(worker_response)
 
                     # Setting variables back to init
                     curr_picked_blocks = 0
                     picked_blocks = []
 
                     # Concatenate worker spots
-                    if len(worker_spots):
-                        worker_spots = np.concatenate(worker_spots, axis=0)
+                    if len(global_workers_spots):
+                        global_workers_spots = np.concatenate(
+                            global_workers_spots, axis=0
+                        )
 
                         # Adding picked spots to global list of spots
                         if spots_global_coordinate is None:
-                            spots_global_coordinate = worker_spots.copy()
+                            spots_global_coordinate = global_workers_spots.copy()
 
                         else:
                             spots_global_coordinate = np.append(
                                 spots_global_coordinate,
-                                worker_spots,
+                                global_workers_spots,
                                 axis=0,
                             )
 
@@ -490,66 +462,77 @@ def z1_puncta_detection(
 
         logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
 
+        global_workers_spots = []
+
         # Wait for all processes to finish
-        worker_spots = [job.get() for job in jobs]
-        worker_spots = [w for w in worker_spots if w is not None]
+        for job in jobs:
+            worker_response = job.get()
+
+            if worker_response is not None:
+                # Global coordinate points
+                global_workers_spots.append(worker_response)
 
         # Setting variables back to init
         curr_picked_blocks = 0
         picked_blocks = []
 
         # Concatenate worker spots
-        if len(worker_spots):
-            # Concatenate worker spots
-            worker_spots = np.concatenate(worker_spots, axis=0)
+        if len(global_workers_spots):
+            global_workers_spots = np.concatenate(global_workers_spots, axis=0)
 
             # Adding picked spots to global list of spots
             if spots_global_coordinate is None:
-                spots_global_coordinate = worker_spots.copy()
+                spots_global_coordinate = global_workers_spots.copy()
 
             else:
                 spots_global_coordinate = np.append(
                     spots_global_coordinate,
-                    worker_spots,
+                    global_workers_spots,
                     axis=0,
                 )
 
     end_time = time()
 
-    # Final prunning, might be spots in boundaries where spots where splitted
-    start_final_prunning_time = time()
-    spots_global_coordinate_prunned = prune_blobs(
-        blobs_array=spots_global_coordinate,
-        distance=spot_parameters["min_zyx"][-1] + spot_parameters["radius_confidence"],
-    )
-    end_final_prunning_time = time()
+    if spots_global_coordinate is None:
+        logger.info("No spots found!")
 
-    logger.info(
-        f"Time taken for final prunning {end_final_prunning_time - start_final_prunning_time} before: {len(spots_global_coordinate)} After: {len(spots_global_coordinate_prunned)}"
-    )
+    else:
+        spots_global_coordinate = spots_global_coordinate.astype(np.uint32)
+        # Final prunning, might be spots in boundaries where spots where splitted
+        start_final_prunning_time = time()
+        spots_global_coordinate_prunned, removed_pos = prune_blobs(
+            blobs_array=spots_global_coordinate.copy(),  # Prunning only ZYX locations, careful with Masks IDs
+            distance=spot_parameters["min_zyx"][-1]
+            + spot_parameters["radius_confidence"],
+        )
+        end_final_prunning_time = time()
 
-    # TODO add chunked precomputed format for points with multiscales
-    coord_space = CoordinateSpace(
-        names=["z", "y", "x"],
-        units=["um", "um", "um"],
-        scales=[
-            image_metadata["axes"]["z"]["scale"],
-            image_metadata["axes"]["y"]["scale"],
-            image_metadata["axes"]["x"]["scale"],
-        ],
-    )
+        logger.info(
+            f"Time taken for final prunning {end_final_prunning_time - start_final_prunning_time} before: {len(spots_global_coordinate)} After: {len(spots_global_coordinate_prunned)}"
+        )
 
-    logger.info(f"Neuroglancer coordinate space: {coord_space}")
-    generate_precomputed_spots(
-        spots=spots_global_coordinate_prunned,
-        path=f"{output_folder}/precomputed",
-        res=coord_space,
-    )
+        # TODO add chunked precomputed format for points with multiscales
+        coord_space = CoordinateSpace(
+            names=["z", "y", "x"],
+            units=["um", "um", "um"],
+            scales=[
+                image_metadata["axes"]["z"]["scale"],
+                image_metadata["axes"]["y"]["scale"],
+                image_metadata["axes"]["x"]["scale"],
+            ],
+        )
 
-    logger.info(f"Processing time: {end_time - start_time} seconds")
+        logger.info(f"Neuroglancer coordinate space: {coord_space}")
+        generate_precomputed_spots(
+            spots=spots_global_coordinate_prunned[:, :3],  # Only ZYX locations
+            path=f"{output_folder}/precomputed",
+            res=coord_space,
+        )
 
-    # Saving spots
-    np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
+        logger.info(f"Processing time: {end_time - start_time} seconds")
+
+        # Saving spots
+        np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
 
     # Getting tracked resources and plotting image
     utils.stop_child_process(profile_process)

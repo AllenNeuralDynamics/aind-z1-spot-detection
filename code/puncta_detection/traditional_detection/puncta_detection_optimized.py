@@ -6,7 +6,7 @@ Modified by: Camilo Laiton
 import logging
 from copy import copy
 from time import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cupy
 import numpy as np
@@ -18,7 +18,9 @@ from scipy.special import erf
 from .._shared.types import ArrayLike
 
 
-def prune_blobs(blobs_array: ArrayLike, distance: int, eps=0):
+def prune_blobs(
+    blobs_array: ArrayLike, distance: int, eps=0
+) -> Tuple[ArrayLike, ArrayLike]:
     """
     Prune blobs based on a radius distance.
 
@@ -33,21 +35,25 @@ def prune_blobs(blobs_array: ArrayLike, distance: int, eps=0):
 
     Returns
     -------
+    Tuple[ArrayLike, ArrayLike]
     cupy.ndarray
         Cupy array with the pruned blobs
+    np.array
+        Removed spots positions
     """
     tree = spatial.cKDTree(blobs_array[:, :3])
     pairs = np.array(list(tree.query_pairs(distance, eps=eps)))
-
+    removed_positions = []
     for i, j in pairs:
         blob1, blob2 = blobs_array[i], blobs_array[j]
         if blob1[-1] > blob2[-1]:
+            removed_positions.append(j)
             blob2[-1] = 0
         else:
+            removed_positions.append(i)
             blob1[-1] = 0
-    return blobs_array[
-        blobs_array[:, -1] > 0
-    ]  # np.array([b for b in blobs_array if b[-1] > 0])
+
+    return blobs_array[blobs_array[:, -1] > 0], np.array(removed_positions)
 
 
 def prune_blobs_optimized(blobs_array, distance: int, eps=0):
@@ -351,7 +357,7 @@ def traditional_3D_spot_detection(
         minYX = min_zyx[-1]
 
         prunning_start_time = time()
-        pruned_spots = prune_blobs(
+        pruned_spots, _ = prune_blobs(
             initial_spots.get(), minYX + radius_confidence, eps=eps
         )  # prune_blobs(initial_spots.get(), minYX + radius_confidence)
         prunning_end_time = time()

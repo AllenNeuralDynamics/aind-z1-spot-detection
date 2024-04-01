@@ -14,3 +14,4 @@ This is a traditional-based algorithm, therefore, parameter tunning is required 
 
 ## Optional mask
 An additional segmentation mask can be provided to only detect spots in given areas. In our case, the segmentation mask provided is a cell segmentation mask of the entire dataset, we used a  [large-scale version of cellpose](https://github.com/AllenNeuralDynamics/aind-z1-cell-segmentation) to generate the segmentation masks.
+When segmentation masks are provided, the `spots.npy` file that is created in the output directory will contain the segmentation ID of that detected spot for further post-processing and analysis. The segmentation ID will be in the last position of the array, e.g., [..., [Z, Y, X, SEG_ID], ...].
