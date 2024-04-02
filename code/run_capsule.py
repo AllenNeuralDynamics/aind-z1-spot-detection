@@ -27,7 +27,7 @@ def run():
     # BUCKET_NAME = "aind-open-data"
     # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
     IMAGE_PATH = (
-        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_4.zarr"
+        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_1.zarr"
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
@@ -39,26 +39,14 @@ def run():
 
     # Puncta detection parameters
 
-    # CH 2
-    sigma_zyx = [2.0, 1.2, 1.2]
+    sigma_zyx = [1.8, 1.0, 1.0]
     background_percentage = 25
     pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
-    min_zyx = [4, 7, 7]
+    min_zyx = [3, 3, 3]
     filt_thresh = 20
     raw_thresh = 180
     context_radius = 3
     radius_confidence = 0.05
-
-    """
-    sigma_zyx = [0.8, 0.8, 0.8]
-    background_percentage = 25
-    pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
-    min_zyx = [3, 9, 9]
-    filt_thresh = 100
-    raw_thresh = 150
-    context_radius = 3
-    radius_confidence = 0.05
-    """
 
     # Data loader params
     puncta_params = {

@@ -161,7 +161,7 @@ def identify_initial_spots(
         data_block = cupy.maximum(background_image, data_block)
 
         # data_block[data_block < background_image] = background_image
-        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
+        data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
 
         LoG_image = -gaussian_laplace(data_block, sigma_zyx)
 
