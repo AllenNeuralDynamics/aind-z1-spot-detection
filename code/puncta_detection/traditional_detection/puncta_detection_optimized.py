@@ -394,7 +394,7 @@ def traditional_3D_spot_detection(
             center -= [context_radius] * 3
             unpadded_coord = coord[:3] - pad_size
             if (
-                True in np.less(data_block_shape, unpadded_coord)
+                True in np.less_equal(data_block_shape, unpadded_coord)
                 or np.where(unpadded_coord < 0)[0].shape[0]
             ):
                 continue

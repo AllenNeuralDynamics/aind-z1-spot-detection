@@ -38,7 +38,8 @@ def run():
     logger = utils.create_logger(output_log_path=str(output_folder))
 
     # Puncta detection parameters
-    """
+
+    # CH 2
     sigma_zyx = [2.0, 1.2, 1.2]
     background_percentage = 25
     pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
@@ -47,6 +48,7 @@ def run():
     raw_thresh = 30
     context_radius = 3
     radius_confidence = 0.05
+
     """
     sigma_zyx = [0.8, 0.8, 0.8]
     background_percentage = 25
@@ -56,6 +58,7 @@ def run():
     raw_thresh = 150
     context_radius = 3
     radius_confidence = 0.05
+    """
 
     # Data loader params
     puncta_params = {
