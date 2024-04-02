@@ -160,7 +160,6 @@ def execute_worker(
             if mask is not None:
                 # Getting spots IDs, adding mask ID to the spot as extra value at the end
                 mask = torch.squeeze(mask)
-                print(spots.shape, mask.shape)
                 mask_ids = np.expand_dims(
                     mask[spots[:, 0], spots[:, 1], spots[:, 2]], axis=0
                 )

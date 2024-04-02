@@ -4,6 +4,7 @@ Modified by: Camilo Laiton
 """
 
 import logging
+import os
 from copy import copy
 from time import time
 from typing import List, Optional, Tuple
@@ -11,7 +12,7 @@ from typing import List, Optional, Tuple
 import cupy
 import numpy as np
 from cupyx.scipy.ndimage import gaussian_laplace
-from cupyx.scipy.ndimage import maximum_filter as mf
+from cupyx.scipy.ndimage import maximum_filter as cupy_maximum_filter
 from scipy import spatial
 from scipy.special import erf
 
@@ -157,16 +158,17 @@ def identify_initial_spots(
 
     if len(non_zero_indices):
         background_image = cupy.percentile(non_zero_indices, background_percentage)
+        data_block = cupy.maximum(background_image, data_block)
 
-        data_block[data_block < background_image] = background_image
-        data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
+        # data_block[data_block < background_image] = background_image
+        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
 
         LoG_image = -gaussian_laplace(data_block, sigma_zyx)
 
         thresholded_img = cupy.logical_and(  # Logical and door to get truth values
             cupy.logical_and(
                 LoG_image
-                <= mf(  # Maximum filter (non-linear filter) to find local maxima
+                == cupy_maximum_filter(  # Maximum filter (non-linear filter) to find local maxima
                     LoG_image,
                     min_zyx,  # shape that is taken from the input array, at every element position, to define the input to the filter function
                 ),

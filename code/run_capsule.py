@@ -27,7 +27,7 @@ def run():
     # BUCKET_NAME = "aind-open-data"
     # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
     IMAGE_PATH = (
-        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_2.zarr"
+        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_4.zarr"
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
@@ -45,7 +45,7 @@ def run():
     pad_size = int(1.6 * max(max(sigma_zyx[1:]), sigma_zyx[0]) * 5)
     min_zyx = [4, 7, 7]
     filt_thresh = 20
-    raw_thresh = 30
+    raw_thresh = 180
     context_radius = 3
     radius_confidence = 0.05
 
@@ -67,7 +67,7 @@ def run():
         "multiscale": "0",
         "prediction_chunksize": (128, 128, 128),
         "target_size_mb": 1024,
-        "n_workers": 16,
+        "n_workers": 0,
         "batch_size": 1,
         "output_folder": output_folder,
         "logger": logger,
