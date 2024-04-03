@@ -72,6 +72,27 @@ def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
 def remove_points_in_pad_area(
     points: ArrayLike, unpadded_slices: Tuple[slice]
 ) -> ArrayLike:
+    """
+    Removes points in padding area. The padding is provided
+    by the scheduler as well as the unpadded slices which
+    will be used to remove points in those areas.
+
+    Parameters
+    ----------
+    points: ArrayLike
+        3D points in the chunk of data. When masks are provided,
+        points will be 4D with an extra dimension for the mask id
+        which is not modified.
+
+    unpadded_slices: Tuple[slice]
+        Slices that point to the non-overlapping area between chunks
+        of data.
+
+    Returns
+    -------
+    ArrayLike
+        Points within the non-overlapping area.
+    """
 
     # Validating seeds are within block boundaries
     unpadded_points = points[
@@ -145,8 +166,6 @@ def execute_worker(
         # Making sure CuPy it's running in the correct device
         spots = traditional_3D_spot_detection(
             data_block=curr_block,
-            prediction_chunksize=prediction_chunksize[-3:],
-            pad_size=axis_pad,
             background_percentage=spot_parameters["background_percentage"],
             sigma_zyx=spot_parameters["sigma_zyx"],
             min_zyx=spot_parameters["min_zyx"],
@@ -399,7 +418,6 @@ def z1_puncta_detection(
     samples_per_iter = n_workers * batch_size
     logger.info(f"Number of batches: {total_batches}")
     spots_global_coordinate = None
-    spots_per_mask_id = {}
 
     # Setting exec workers to CO CPUs
     exec_n_workers = co_cpus
@@ -426,9 +444,7 @@ def z1_puncta_detection(
                         "data": sample.batch_tensor,
                         "batch_super_chunk": sample.batch_super_chunk[0],
                         "batch_internal_slice": sample.batch_internal_slice,
-                        "prediction_chunksize": prediction_chunksize,
                         "overlap_prediction_chunksize": overlap_prediction_chunksize,
-                        "axis_pad": axis_pad,
                         "dataset_shape": zarr_dataset.lazy_data.shape,
                         "spot_parameters": spot_parameters,
                         "logger": logger,

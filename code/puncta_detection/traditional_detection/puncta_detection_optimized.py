@@ -304,10 +304,8 @@ def intensity_integrated_gaussian3D(center, sigmas, limit):
 
 def traditional_3D_spot_detection(
     data_block: ArrayLike,
-    prediction_chunksize: Tuple[int],
     background_percentage: int,
     sigma_zyx: List[int],
-    pad_size: int,
     min_zyx: List[int],
     filt_thresh: int,
     raw_thresh: int,
@@ -325,6 +323,18 @@ def traditional_3D_spot_detection(
         1. B. Percentile to get estimated background image.
         1. C. Combination of logical ANDs to filter the LoG image
         using threshold values and non-linear maximum filter.
+    2. Prune identified spots within a certain radius.
+    3. Get a small image (context) within a radius for each spot.
+    4. Fit a 3D gaussian using the context of each spot and leave the
+        ones that are able to converge.
+
+    Returns
+    -------
+    ArrayLike
+        3D ZYX points in the center of the bloby objects.
+        If a segmentation mask is provided, the points will have
+        the form of Z,Y,X,MASK_ID where MASK_ID represents the ID
+        of the segmentation mask in the area where the spot is located.
     """
     puncta = None
 
@@ -343,7 +353,6 @@ def traditional_3D_spot_detection(
         logger.info(
             f"Initial spots time: {initial_spots_end_time - initial_spots_start_time}"
         )
-    len_spots = len(initial_spots) if initial_spots is not None else None
 
     if (
         initial_spots is not None
@@ -356,7 +365,7 @@ def traditional_3D_spot_detection(
         prunning_start_time = time()
         pruned_spots, _ = prune_blobs(
             initial_spots.get(), minYX + radius_confidence, eps=eps
-        )  # prune_blobs(initial_spots.get(), minYX + radius_confidence)
+        )
         prunning_end_time = time()
         if verbose:
             logger.info(
@@ -388,12 +397,7 @@ def traditional_3D_spot_detection(
 
             center, N, r = out
             center -= [context_radius] * 3
-            unpadded_coord = coord[:3]  # - pad_size
-            # if (
-            #     True in np.less_equal(prediction_chunksize, unpadded_coord)
-            #     or np.where(unpadded_coord < 0)[0].shape[0]
-            # ):
-            #     continue
+            unpadded_coord = coord[:3]
 
             results.append(
                 unpadded_coord.tolist() + center.tolist() + [np.linalg.norm(center), r]
@@ -406,7 +410,7 @@ def traditional_3D_spot_detection(
                 f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
             )
 
-        results_np = np.array(results).astype(int)
+        results_np = np.array(results).astype(np.uint32)
 
         if not len(results_np):
             return None
