@@ -15,7 +15,7 @@ import psutil
 import torch
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
-    concatenate_lazy_data, recover_global_position)
+    concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from neuroglancer import CoordinateSpace
 
@@ -69,11 +69,32 @@ def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
     return data
 
 
+def remove_points_in_pad_area(
+    points: ArrayLike, unpadded_slices: Tuple[slice]
+) -> ArrayLike:
+
+    # Validating seeds are within block boundaries
+    unpadded_points = points[
+        (points[:, 0] >= unpadded_slices[0].start)  # within Z boundaries
+        & (points[:, 0] <= unpadded_slices[0].stop)
+        & (points[:, 1] >= unpadded_slices[1].start)  # Within Y boundaries
+        & (points[:, 1] <= unpadded_slices[1].stop)
+        & (points[:, 2] >= unpadded_slices[2].start)  # Within X boundaries
+        & (points[:, 2] <= unpadded_slices[2].stop)
+    ]
+
+    return unpadded_points
+
+
 def execute_worker(
     data: ArrayLike,
     batch_super_chunk: Tuple[slice],
     batch_internal_slice: Tuple[slice],
+    axis_pad: int,
     spot_parameters: Dict,
+    prediction_chunksize: Tuple[int],
+    overlap_prediction_chunksize: Tuple[int],
+    dataset_shape: Tuple[int],
     logger: logging.Logger,
 ) -> np.array:
     """
@@ -124,9 +145,10 @@ def execute_worker(
         # Making sure CuPy it's running in the correct device
         spots = traditional_3D_spot_detection(
             data_block=curr_block,
+            prediction_chunksize=prediction_chunksize[-3:],
+            pad_size=axis_pad,
             background_percentage=spot_parameters["background_percentage"],
             sigma_zyx=spot_parameters["sigma_zyx"],
-            pad_size=spot_parameters["pad_size"],
             min_zyx=spot_parameters["min_zyx"],
             filt_thresh=spot_parameters["filt_thresh"],
             raw_thresh=spot_parameters["raw_thresh"],
@@ -143,9 +165,6 @@ def execute_worker(
             )
 
         else:
-            logger.info(
-                f"Worker [{curr_pid}] - Found {len(spots)} spots for in inner batch {batch_idx}"
-            )
 
             # Recover global position of internal chunk
             (
@@ -157,6 +176,13 @@ def execute_worker(
                 internal_slices=batch_internal_slice,
             )
 
+            unpadded_global_slice, unpadded_local_slice = unpad_global_coords(
+                global_coord_pos=global_coord_pos[-3:],
+                block_shape=curr_block.shape[-3:],
+                overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
+                dataset_shape=dataset_shape[-3:],  # zarr_dataset.lazy_data.shape,
+            )
+
             if mask is not None:
                 # Getting spots IDs, adding mask ID to the spot as extra value at the end
                 mask = torch.squeeze(mask)
@@ -165,14 +191,19 @@ def execute_worker(
                 )
                 spots = np.append(spots.T, mask_ids, axis=0).T
 
-            curr_spots = spots.copy()
+            curr_spots = spots.copy().astype(np.uint32)
             # Converting to global coordinates, only to ZYX position, leaving mask ID if exists
             curr_spots[:, :3] = np.array(global_coord_positions_start)[
                 :, -3:
             ] + np.array(spots[:, :3])
 
+            # Removing points within pad area
+            curr_spots = remove_points_in_pad_area(
+                points=curr_spots, unpadded_slices=unpadded_global_slice
+            )
+
             logger.info(
-                f"Worker {os.getpid()}: Batch {batch_super_chunk} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - Global Coords start: {global_coord_positions_start}"
+                f"Worker {curr_pid}: Found {len(curr_spots)} spots for in inner batch {batch_idx} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - upadded global coords: {unpadded_global_slice}"
             )
 
             # Adding spots to the worker batch
@@ -208,7 +239,8 @@ def z1_puncta_detection(
     prediction_chunksize: Tuple[int, ...],
     target_size_mb: int,
     n_workers: int,
-    batch_size: 96,
+    axis_pad: int,
+    batch_size: int,
     output_folder: str,
     spot_parameters: Dict,
     logger: logging.Logger,
@@ -300,7 +332,7 @@ def z1_puncta_detection(
         pin_memory = False
         multiprocessing.set_start_method("spawn", force=True)
 
-    overlap_prediction_chunksize = (0, 0, 0)
+    overlap_prediction_chunksize = (axis_pad, axis_pad, axis_pad)
     if segmentation_mask_path:
         logger.info(f"Using segmentation mask in {segmentation_mask_path}")
         lazy_data = concatenate_lazy_data(
@@ -308,7 +340,7 @@ def z1_puncta_detection(
             multiscales=[multiscale, "."],
             concat_axis=-4,
         )
-        overlap_prediction_chunksize = (0, 0, 0, 0)
+        overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
         prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
 
         logger.info(
@@ -355,7 +387,9 @@ def z1_puncta_detection(
         locked_array=False,
     )
 
-    logger.info("Running puncta detection in chunked data")
+    logger.info(
+        f"Running puncta detection in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
+    )
 
     start_time = time()
 
@@ -378,7 +412,6 @@ def z1_puncta_detection(
     curr_picked_blocks = 0
 
     logger.info(f"Number of workers processing data: {exec_n_workers}")
-
     with cupy.cuda.Device(device=device):
         with cupy.cuda.Stream.null:
             for i, sample in enumerate(zarr_data_loader):
@@ -393,6 +426,10 @@ def z1_puncta_detection(
                         "data": sample.batch_tensor,
                         "batch_super_chunk": sample.batch_super_chunk[0],
                         "batch_internal_slice": sample.batch_internal_slice,
+                        "prediction_chunksize": prediction_chunksize,
+                        "overlap_prediction_chunksize": overlap_prediction_chunksize,
+                        "axis_pad": axis_pad,
+                        "dataset_shape": zarr_dataset.lazy_data.shape,
                         "spot_parameters": spot_parameters,
                         "logger": logger,
                     }

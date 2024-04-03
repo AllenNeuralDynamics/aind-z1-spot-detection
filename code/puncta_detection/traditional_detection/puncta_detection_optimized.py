@@ -102,11 +102,9 @@ def identify_initial_spots(
     data_block: ArrayLike,
     background_percentage: int,
     sigma_zyx: List[int],
-    pad_size: int,
     min_zyx: List[int],
     filt_thresh: int,
     raw_thresh: int,
-    pad_mode: Optional[str] = "reflect",
 ):
     """
     Identifies the initial spots using Laplacian of
@@ -123,9 +121,6 @@ def identify_initial_spots(
     sigma_zyx: List[int]
         Sigmas to be applied over each axis in
         the Laplacian of Gaussian.
-
-    pad_size: int
-        Padding size in the borders of the image
 
     min_zyx: List[int]
         Shape of the subarray taken by the maximum
@@ -161,7 +156,7 @@ def identify_initial_spots(
         data_block = cupy.maximum(background_image, data_block)
 
         # data_block[data_block < background_image] = background_image
-        data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
+        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode) # Taking pad from original data not reflect
 
         LoG_image = -gaussian_laplace(data_block, sigma_zyx)
 
@@ -309,6 +304,7 @@ def intensity_integrated_gaussian3D(center, sigmas, limit):
 
 def traditional_3D_spot_detection(
     data_block: ArrayLike,
+    prediction_chunksize: Tuple[int],
     background_percentage: int,
     sigma_zyx: List[int],
     pad_size: int,
@@ -337,7 +333,6 @@ def traditional_3D_spot_detection(
         data_block=data_block,
         background_percentage=background_percentage,
         sigma_zyx=sigma_zyx,
-        pad_size=pad_size,
         min_zyx=min_zyx,
         filt_thresh=filt_thresh,
         raw_thresh=raw_thresh,
@@ -380,7 +375,6 @@ def traditional_3D_spot_detection(
                 f"Scanning spots time: {scanning_end_time - scanning_start_time}"
             )
 
-        data_block_shape = data_block.shape
         results = []
 
         fit_gau_spots_start_time = time()
@@ -394,12 +388,12 @@ def traditional_3D_spot_detection(
 
             center, N, r = out
             center -= [context_radius] * 3
-            unpadded_coord = coord[:3] - pad_size
-            if (
-                True in np.less_equal(data_block_shape, unpadded_coord)
-                or np.where(unpadded_coord < 0)[0].shape[0]
-            ):
-                continue
+            unpadded_coord = coord[:3]  # - pad_size
+            # if (
+            #     True in np.less_equal(prediction_chunksize, unpadded_coord)
+            #     or np.where(unpadded_coord < 0)[0].shape[0]
+            # ):
+            #     continue
 
             results.append(
                 unpadded_coord.tolist() + center.tolist() + [np.linalg.norm(center), r]
