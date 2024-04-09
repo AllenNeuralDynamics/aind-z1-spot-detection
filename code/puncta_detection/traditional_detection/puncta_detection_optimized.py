@@ -410,7 +410,7 @@ def traditional_3D_spot_detection(
                 f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
             )
 
-        results_np = np.array(results).astype(np.uint32)
+        results_np = np.array(results).astype(np.int32)
 
         if not len(results_np):
             return None
