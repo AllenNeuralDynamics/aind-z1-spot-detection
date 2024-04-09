@@ -111,9 +111,7 @@ def execute_worker(
     data: ArrayLike,
     batch_super_chunk: Tuple[slice],
     batch_internal_slice: Tuple[slice],
-    axis_pad: int,
     spot_parameters: Dict,
-    prediction_chunksize: Tuple[int],
     overlap_prediction_chunksize: Tuple[int],
     dataset_shape: Tuple[int],
     logger: logging.Logger,
@@ -210,7 +208,7 @@ def execute_worker(
                 )
                 spots = np.append(spots.T, mask_ids, axis=0).T
 
-            curr_spots = spots.copy().astype(np.uint32)
+            curr_spots = spots.copy().astype(np.int32)
             # Converting to global coordinates, only to ZYX position, leaving mask ID if exists
             curr_spots[:, :3] = np.array(global_coord_positions_start)[
                 :, -3:
@@ -356,7 +354,7 @@ def z1_puncta_detection(
         logger.info(f"Using segmentation mask in {segmentation_mask_path}")
         lazy_data = concatenate_lazy_data(
             dataset_paths=[dataset_path, segmentation_mask_path],
-            multiscales=[multiscale, "."],
+            multiscales=[multiscale, multiscale],
             concat_axis=-4,
         )
         overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
@@ -550,7 +548,7 @@ def z1_puncta_detection(
         logger.info("No spots found!")
 
     else:
-        spots_global_coordinate = spots_global_coordinate.astype(np.uint32)
+        spots_global_coordinate = spots_global_coordinate.astype(np.int32)
         # Final prunning, might be spots in boundaries where spots where splitted
         start_final_prunning_time = time()
         spots_global_coordinate_prunned, removed_pos = prune_blobs(

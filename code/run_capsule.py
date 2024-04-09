@@ -27,11 +27,11 @@ def run():
     # BUCKET_NAME = "aind-open-data"
     # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
     IMAGE_PATH = (
-        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-03-18_17-25-52/channel_2.zarr"
+        "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-04-02_20-06-14/channel_2.zarr"
     )
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
-    SEGMENTATION_PATH = "../data/upscaled_masks_R0_01.zarr"  # f"{DATA_FOLDER}/upscaled_masks_R0_01.zarr"
+    SEGMENTATION_PATH = "../data/Z1_R0_cell_seg_radially_corrected_multiscale.zarr"  # f"{DATA_FOLDER}/upscaled_masks_R0_01.zarr"
     # If using the bucket path directly, provide credentials to the capsule
     # f"s3://{BUCKET_NAME}/{IMAGE_PATH}"
 
