@@ -354,7 +354,7 @@ def z1_puncta_detection(
         logger.info(f"Using segmentation mask in {segmentation_mask_path}")
         lazy_data = concatenate_lazy_data(
             dataset_paths=[dataset_path, segmentation_mask_path],
-            multiscales=[multiscale, multiscale],
+            multiscales=[multiscale, "0"],
             concat_axis=-4,
         )
         overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)

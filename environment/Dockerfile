@@ -7,17 +7,14 @@ ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
-ARG new_pred_version="0.0.9"
+ARG new_pred_version="1.0.0"
 
 RUN pip install --no-cache-dir \
     jupyterlab \
     git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git \
-    zarr==2.16.1 \
     numpy==1.24.4 \
     scikit-image==0.22.0 \
     matplotlib==3.8.2 \
-    dask[distributed]==2023.5.0 \
-    dask-image==2023.03.0 \
     scipy==1.10.1 \
     cupy-cuda11x \
     neuroglancer
