@@ -123,8 +123,8 @@ def get_projection_montage(
     nz, ny, nx = vol.shape
     m = np.zeros((ny + nz + gap, nx + nz + gap), dtype=vol.dtype)
     m[:ny, :nx] = proj_function(vol, axis=0)
-    m[ny + gap :, :nx] = np.max(vol, axis=1)
-    m[:ny, nx + gap :] = np.max(vol, axis=2).transpose()
+    m[ny + gap :, :nx] = np.max(vol, axis=1)  # noqa: E203
+    m[:ny, nx + gap :] = np.max(vol, axis=2).transpose()  # noqa: E203
     return m
 
 

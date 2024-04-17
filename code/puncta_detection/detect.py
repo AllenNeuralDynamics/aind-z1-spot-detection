@@ -7,7 +7,7 @@ import multiprocessing
 import os
 # from functools import partial
 from time import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cupy
 import numpy as np
@@ -158,7 +158,7 @@ def execute_worker(
     for batch_idx in range(0, data.shape[0]):
         curr_block = cupy.squeeze(data_block_cupy[batch_idx, ...])
         logger.info(
-            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape} - Current block: {curr_block.shape}"
+            f"Worker [{curr_pid}] Processing inner batch {batch_idx} out of {data.shape[0]} - Data shape: {data.shape} - Current block: {curr_block.shape}"  # noqa: E501
         )
 
         # Making sure CuPy it's running in the correct device
@@ -220,7 +220,7 @@ def execute_worker(
             )
 
             logger.info(
-                f"Worker {curr_pid}: Found {len(curr_spots)} spots for in inner batch {batch_idx} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - upadded global coords: {unpadded_global_slice}"
+                f"Worker {curr_pid}: Found {len(curr_spots)} spots for in inner batch {batch_idx} - Internal pos: {batch_internal_slice} - Global coords: {global_coord_pos} - upadded global coords: {unpadded_global_slice}"  # noqa: E501
             )
 
             # Adding spots to the worker batch
@@ -325,6 +325,16 @@ def z1_puncta_detection(
     time_points = manager.list()
     cpu_percentages = manager.list()
     memory_usages = manager.list()
+    gpu_resources = manager.dict()
+
+    gpu_metrics = utils.get_gpu_metrics()
+    curr_idxs = list(gpu_metrics.keys())
+
+    for gpu_indx in curr_idxs:
+        gpu_resources[gpu_indx] = {
+            "gpu_utilization": manager.list(),
+            "memory_utilization": manager.list(),
+        }
 
     profile_process = multiprocessing.Process(
         target=utils.profile_resources,
@@ -332,12 +342,14 @@ def z1_puncta_detection(
             time_points,
             cpu_percentages,
             memory_usages,
-            20,
+            60,
+            gpu_resources,
         ),
     )
     profile_process.daemon = True
     profile_process.start()
 
+    # Starting spot detection
     logger.info("Creating chunked data loader")
     shm_memory = psutil.virtual_memory()
     logger.info(f"Shared memory information: {shm_memory}")
@@ -361,7 +373,7 @@ def z1_puncta_detection(
         prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
 
         logger.info(
-            f"Segmentation mask provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+            f"Segmentation mask provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"  # noqa: E501
         )
 
     else:
@@ -405,7 +417,7 @@ def z1_puncta_detection(
     )
 
     logger.info(
-        f"Running puncta detection in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
+        f"Running puncta detection in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"  # noqa: E501
     )
 
     start_time = time()
@@ -432,7 +444,7 @@ def z1_puncta_detection(
         with cupy.cuda.Stream.null:
             for i, sample in enumerate(zarr_data_loader):
                 logger.info(
-                    f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+                    f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"  # noqa: E501
                 )
 
                 # start_spot_time = time()
@@ -499,7 +511,7 @@ def z1_puncta_detection(
 
                 if i + samples_per_iter > total_batches:
                     logger.info(
-                        f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
+                        f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"  # noqa: E501
                     )
                     break
 
@@ -552,14 +564,15 @@ def z1_puncta_detection(
         # Final prunning, might be spots in boundaries where spots where splitted
         start_final_prunning_time = time()
         spots_global_coordinate_prunned, removed_pos = prune_blobs(
-            blobs_array=spots_global_coordinate.copy(),  # Prunning only ZYX locations, careful with Masks IDs
+            # Prunning only ZYX locations, careful with Masks IDs
+            blobs_array=spots_global_coordinate.copy(),
             distance=spot_parameters["min_zyx"][-1]
             + spot_parameters["radius_confidence"],
         )
         end_final_prunning_time = time()
 
         logger.info(
-            f"Time taken for final prunning {end_final_prunning_time - start_final_prunning_time} before: {len(spots_global_coordinate)} After: {len(spots_global_coordinate_prunned)}"
+            f"Time taken for final prunning {end_final_prunning_time - start_final_prunning_time} before: {len(spots_global_coordinate)} After: {len(spots_global_coordinate_prunned)}"  # noqa: E501
         )
 
         # TODO add chunked precomputed format for points with multiscales
@@ -594,5 +607,6 @@ def z1_puncta_detection(
             cpu_percentages,
             memory_usages,
             output_folder,
-            "dispim_puncta_detection",
+            gpu_resources=gpu_resources,
+            prefix="z1_puncta_detection",
         )

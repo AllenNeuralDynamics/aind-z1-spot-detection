@@ -156,10 +156,10 @@ def identify_initial_spots(
         thresholded_img = cupy.logical_and(  # Logical and door to get truth values
             cupy.logical_and(
                 LoG_image
-                <= mf(  # Maximum filter (non-linear filter) to find local maxima
+                == mf(  # Maximum filter (non-linear filter) to find local maxima
                     LoG_image,
-                    min_zyx,  # shape that is taken from the input array, at every element position, to define the input to the filter function
-                ),
+                    min_zyx,  # shape that is taken from the input array
+                ),  # at every element position, to define the input to the filter function
                 LoG_image
                 > filt_thresh,  # array with the values higher than the filter threshold
             ),
@@ -320,11 +320,7 @@ def traditional_3D_spot_detection(
         )
     len_spots = len(initial_spots) if initial_spots is not None else None
 
-    if (
-        initial_spots is not None
-        and len(initial_spots)
-        and gaussian_laplaced_img is not None
-    ):
+    if initial_spots is not None and len_spots and gaussian_laplaced_img is not None:
 
         minYX = min_zyx[-1]
 
@@ -334,7 +330,7 @@ def traditional_3D_spot_detection(
 
         if verbose:
             logger.info(
-                f"Prunning {len(initial_spots)} spots time: {prunning_end_time - prunning_start_time}"
+                f"Prunning {len_spots} spots time: {prunning_end_time - prunning_start_time}"
             )
         guassian_laplaced_img_memory = gaussian_laplaced_img.get()
 
@@ -373,7 +369,7 @@ def traditional_3D_spot_detection(
 
         if verbose:
             logger.info(
-                f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
+                f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"  # noqa: E501
             )
 
         results_np = np.array(results).astype(int)
