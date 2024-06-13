@@ -607,11 +607,10 @@ def traditional_3D_spot_detection(
                 [
                     estimate_background_foreground(
                         buffer_context=buffer_context,
-                        spot=scanned_spot,
                         background_percentile=background_percentile,
                         context_radius=context_radius,
                     )
-                    for scanned_spot, buffer_context in scan_bbox(
+                    for _, buffer_context in scan_bbox(
                         data_block, puncta, buffer_radius
                     )
                 ]
