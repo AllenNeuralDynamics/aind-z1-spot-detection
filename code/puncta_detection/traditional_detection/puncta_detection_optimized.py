@@ -4,10 +4,9 @@ Modified by: Camilo Laiton
 """
 
 import logging
-import os
 from copy import copy
 from time import time
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import cupy
 import numpy as np
@@ -57,7 +56,7 @@ def prune_blobs(
     return blobs_array[blobs_array[:, -1] > 0], np.array(removed_positions)
 
 
-def prune_blobs_optimized(blobs_array, distance: int, eps=0):
+def prune_blobs_optimized(blobs_array, distance: int, eps=0) -> cupy.ndarray:
     """
     Prune blobs based on a radius distance.
 
@@ -105,7 +104,7 @@ def identify_initial_spots(
     min_zyx: List[int],
     filt_thresh: int,
     raw_thresh: int,
-):
+) -> Tuple[ArrayLike, ArrayLike]:
     """
     Identifies the initial spots using Laplacian of
     Gaussian, filtering and maximum filter.
@@ -156,7 +155,8 @@ def identify_initial_spots(
         data_block = cupy.maximum(background_image, data_block)
 
         # data_block[data_block < background_image] = background_image
-        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode) # Taking pad from original data not reflect
+        # Taking pad from original data, do not reflect if possible
+        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
 
         LoG_image = -gaussian_laplace(data_block, sigma_zyx)
 
@@ -165,8 +165,8 @@ def identify_initial_spots(
                 LoG_image
                 == cupy_maximum_filter(  # Maximum filter (non-linear filter) to find local maxima
                     LoG_image,
-                    min_zyx,  # shape that is taken from the input array, at every element position, to define the input to the filter function
-                ),
+                    min_zyx,  # shape that is taken from the input array
+                ),  # at every element position, to define the input to the filter function
                 LoG_image
                 > filt_thresh,  # array with the values higher than the filter threshold
             ),
@@ -181,7 +181,7 @@ def identify_initial_spots(
     return spots, LoG_image
 
 
-def scan(img: ArrayLike, spots: ArrayLike, radius: int):
+def scan(img: ArrayLike, spots: ArrayLike, radius: int) -> Tuple[ArrayLike, ArrayLike]:
     """
     Scans the spots to get image data
     for each of them. Additionally, we prune
@@ -218,9 +218,9 @@ def scan(img: ArrayLike, spots: ArrayLike, radius: int):
     weights = np.stack(
         [
             img[
-                sp[0] - radius : sp[0] + radius + 1,
-                sp[1] - radius : sp[1] + radius + 1,
-                sp[2] - radius : sp[2] + radius + 1,
+                sp[0] - radius : sp[0] + radius + 1,  # noqa: E203
+                sp[1] - radius : sp[1] + radius + 1,  # noqa: E203
+                sp[2] - radius : sp[2] + radius + 1,  # noqa: E203
             ]
             for sp in spots_prunned
         ]
@@ -279,7 +279,7 @@ def fit_gaussian(S, fit_sigmas, r):
         return False
 
 
-def intensity_integrated_gaussian3D(center, sigmas, limit):
+def intensity_integrated_gaussian3D(center, sigmas, limit) -> ArrayLike:
     """"""
     # Create an array of shape (2, len(sigmas), limit) with values -0.5 and 0.5
     d_values = np.array([[-0.5, 0.5]], dtype=np.float32).reshape(2, 1, 1)
@@ -296,10 +296,130 @@ def intensity_integrated_gaussian3D(center, sigmas, limit):
     # Compute the error function
     res_erf = erf(res)
 
-    # Compute the absolute differences between the error function values for the two sides of the center
+    # Compute the absolute differences between the error function values
+    # for the two sides of the center
     diff = np.abs(res_erf[0] - res_erf[1])
     # Compute the product along the first axis
     return np.prod(np.meshgrid(*diff), axis=0)
+
+
+def scan_bbox(
+    img: ArrayLike, spots: ArrayLike, radius: int
+) -> Iterable[Tuple[List, ArrayLike]]:
+    """
+    Scans the spots to get image data
+    for each of them. Additionally, we prune
+    spots around borders of the image since
+    the algorithm is sensitive to these areas
+    and we also have padding.
+
+    Parameters
+    ----------
+    img: ArrayLike
+        Image where the spots are located
+
+    spots: ArrayLike
+        Identified spots
+
+    radius: int
+        Search radius around each spot
+
+    Returns
+    -------
+        Iterable with array with image data of shape radius in each axis.
+    """
+    depth, height, width = img.shape
+
+    for p in spots:
+        z_min = int(max(0, p[0] - radius))
+        z_max = int(min(depth - 1, p[0] + radius))
+
+        y_min = int(max(0, p[1] - radius))
+        y_max = int(min(height - 1, p[1] + radius))
+
+        x_min = int(max(0, p[2] - radius))
+        x_max = int(min(width - 1, p[2] + radius))
+
+        yield p, img[
+            z_min:z_max,  # noqa: E203
+            y_min:y_max,  # noqa: E203
+            x_min:x_max,  # noqa: E203
+        ]
+
+
+def estimate_background_foreground(
+    buffer_context: ArrayLike,
+    context_radius: int,
+    background_percentile: Optional[float] = 1.0,
+) -> Tuple[float, float]:
+    """
+    Estimates the background foreground and background
+    of a given spot. The spot must be in the center of
+    the buffer context image.
+
+    Parameters
+    ----------
+    buffer_context: ArrayLike
+        Spot data around a buffer radius
+        which should be bigger or equal to
+        context radius. The spot must be in
+        the center of this block of data.
+
+    context_radius: int
+        Radius used when fitting the gaussian.
+
+    background_percentile: Optional[float]
+        Background percentile to use.
+        Default: 1.0
+
+    Returns
+    -------
+    Tuple[float, float]
+        Foreground and background spot intensities.
+    """
+    spot_center = np.array(buffer_context.shape) // 2
+
+    # Grid for the spherical mask
+    z, y, x = np.ogrid[
+        : buffer_context.shape[0],
+        : buffer_context.shape[1],
+        : buffer_context.shape[2],
+    ]
+
+    # Condition to create a circular mask
+    fg_condition = (
+        (x - spot_center[0]) ** 2
+        + (y - spot_center[1]) ** 2
+        + (z - spot_center[2]) ** 2
+    ) <= context_radius**2
+
+    bg_condition = np.bitwise_not(fg_condition)
+
+    # Background intensities
+    bg_intensities = buffer_context * bg_condition
+    bg_intensities = bg_intensities[bg_intensities != 0]
+
+    # Foreground intensities
+    fg_intensities = buffer_context * fg_condition
+    fg_intensities = fg_intensities[fg_intensities != 0]
+
+    if not bg_intensities.shape[0]:
+        raise ValueError(
+            f"Problem in spot {spot_center}, non-zero background is: {bg_intensities}"
+        )
+
+    if not fg_intensities.shape[0]:
+        raise ValueError(
+            f"Problem in spot {spot_center}, non-zero foreground is: {fg_intensities}"
+        )
+
+    # Getting background percentile
+    spot_bg = np.percentile(bg_intensities.flatten(), background_percentile)
+
+    # Getting foreground mean
+    spot_fg = np.mean(fg_intensities)
+
+    return spot_fg, spot_bg
 
 
 def traditional_3D_spot_detection(
@@ -313,10 +433,14 @@ def traditional_3D_spot_detection(
     context_radius: Optional[int] = 3,
     radius_confidence: Optional[float] = 0.05,
     eps: Optional[int] = 0,
+    run_context_estimates: Optional[bool] = True,
+    buffer_radius: Optional[int] = None,
+    background_percentile: Optional[float] = 1.0,
     verbose: Optional[bool] = False,
-):
+) -> ArrayLike:
     """
     Runs the spot detection algorithm.
+
     1. Identify initial spots using:
         1. A. Laplacian of Gaussian to enhance regions
         where the intensity changes dramatically (higher gradient).
@@ -327,6 +451,59 @@ def traditional_3D_spot_detection(
     3. Get a small image (context) within a radius for each spot.
     4. Fit a 3D gaussian using the context of each spot and leave the
         ones that are able to converge.
+
+    Parameters
+    ----------
+    data_block: ArrayLike
+        Block of data where we want to run spot detection.
+
+    background_percentage: int
+        Background percentage we want to not have in the
+        prediction.
+
+    sigma_zyx: List[int]
+        Sigma values for the laplacian of gaussians.
+
+    min_zyx: List[int]
+        Min zyx for the spot.
+
+    filt_thresh: int
+        Threshold for the filtered image.
+
+    raw_thresh: int
+        Threshold for the raw data.
+
+    logger: logging.Logger
+        Logging object
+
+    context_radius: Optional[int] = 3
+        Radius that will be used to pull data
+        to be able to fit the 3D gaussian.
+
+    radius_confidence: Optional[float] = 0.05
+        Radius confidence. This is used along
+        with min_zyx parameter to prune spots
+        with the kdTree.
+
+    eps: Optional[int] = 0
+        Parameter for the approximate seach.
+        Plese check: scipy.spatial.KDTree.query_pairs
+
+    run_context_estimates: Optional[bool]
+        Runs estimation of foreground and background
+        per spot.
+
+    buffer_radius: Optional[int]
+        Buffer radius. This must be bigger than
+        the context radius.
+
+    background_percentile: Optional[float]
+        Background percentile used to compute
+        the spot background.
+        Default: 1.0
+
+    verbose: Optional[bool] = False,
+        Verbose to show logs.
 
     Returns
     -------
@@ -407,7 +584,7 @@ def traditional_3D_spot_detection(
 
         if verbose:
             logger.info(
-                f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
+                f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"  # noqa: E501
             )
 
         results_np = np.array(results).astype(np.int32)
@@ -416,5 +593,31 @@ def traditional_3D_spot_detection(
             return None
 
         puncta = results_np[:, :3]
+
+        data_block = data_block.get()
+
+        # Making sure buffer radius is correct
+        if buffer_radius is None or buffer_radius < context_radius:
+            buffer_radius = context_radius * 2
+
+        if run_context_estimates:
+
+            # Estimating spots foreground - background
+            spots_fg_bg = np.array(
+                [
+                    estimate_background_foreground(
+                        buffer_context=buffer_context,
+                        spot=scanned_spot,
+                        background_percentile=background_percentile,
+                        context_radius=context_radius,
+                    )
+                    for scanned_spot, buffer_context in scan_bbox(
+                        data_block, puncta, buffer_radius
+                    )
+                ]
+            )
+
+            # horizontal stacking
+            puncta = np.append(puncta.T, spots_fg_bg.T, axis=0).T
 
     return puncta
