@@ -388,9 +388,9 @@ def estimate_background_foreground(
 
     # Condition to create a circular mask
     fg_condition = (
-        (x - spot_center[0]) ** 2
+        (z - spot_center[0]) ** 2
         + (y - spot_center[1]) ** 2
-        + (z - spot_center[2]) ** 2
+        + (x - spot_center[2]) ** 2
     ) <= context_radius**2
 
     bg_condition = np.bitwise_not(fg_condition)
