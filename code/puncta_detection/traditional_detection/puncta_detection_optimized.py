@@ -403,21 +403,27 @@ def estimate_background_foreground(
     fg_intensities = buffer_context * fg_condition
     fg_intensities = fg_intensities[fg_intensities != 0]
 
+    # Manual inspection of spot
+    spot_bg = -1
+    spot_fg = -1
+
     if not bg_intensities.shape[0]:
-        raise ValueError(
+        print(
             f"Problem in spot {spot_center}, non-zero background is: {bg_intensities}"
         )
 
+    else:
+        # Getting background percentile
+        spot_bg = np.percentile(bg_intensities.flatten(), background_percentile)
+
     if not fg_intensities.shape[0]:
-        raise ValueError(
+        print(
             f"Problem in spot {spot_center}, non-zero foreground is: {fg_intensities}"
         )
 
-    # Getting background percentile
-    spot_bg = np.percentile(bg_intensities.flatten(), background_percentile)
-
-    # Getting foreground mean
-    spot_fg = np.mean(fg_intensities)
+    else:
+        # Getting foreground mean
+        spot_fg = np.mean(fg_intensities)
 
     return spot_fg, spot_bg
 
