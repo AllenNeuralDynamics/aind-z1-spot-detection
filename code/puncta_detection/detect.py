@@ -494,9 +494,6 @@ def z1_puncta_detection(
                                 axis=0,
                             )
 
-                        if spots_global_coordinate.shape[0] > 10:
-                            break
-
                 # end_spot_time = time()
                 # logger.info(
                 #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
