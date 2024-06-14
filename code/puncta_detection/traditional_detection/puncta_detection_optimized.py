@@ -617,5 +617,4 @@ def traditional_3D_spot_detection(
             # horizontal stacking
             puncta = np.append(puncta.T, spots_fg_bg.T, axis=0).T
 
-    print("Puncta: ", puncta)
     return puncta

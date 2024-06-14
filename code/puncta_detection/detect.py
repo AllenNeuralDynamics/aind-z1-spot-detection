@@ -552,7 +552,6 @@ def z1_puncta_detection(
         logger.info("No spots found!")
 
     else:
-        print("Spots after concat: ", spots_global_coordinate)
         spots_global_coordinate = spots_global_coordinate.astype(np.float32)
         # Final prunning, might be spots in boundaries where spots where splitted
         start_final_prunning_time = time()
