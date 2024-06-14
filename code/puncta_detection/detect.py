@@ -208,7 +208,7 @@ def execute_worker(
                 )
                 spots = np.append(spots.T, mask_ids, axis=0).T
 
-            curr_spots = spots.copy().astype(np.int32)
+            curr_spots = spots.copy().astype(np.float32)
             # Converting to global coordinates, only to ZYX position, leaving mask ID if exists
             curr_spots[:, :3] = np.array(global_coord_positions_start)[
                 :, -3:
@@ -469,7 +469,9 @@ def z1_puncta_detection(
 
                         if worker_response is not None:
                             # Global coordinate points
-                            global_workers_spots.append(worker_response)
+                            global_workers_spots.append(
+                                worker_response.astype(np.float32)
+                            )
 
                     # Setting variables back to init
                     curr_picked_blocks = 0
@@ -478,7 +480,7 @@ def z1_puncta_detection(
                     # Concatenate worker spots
                     if len(global_workers_spots):
                         global_workers_spots = np.concatenate(
-                            global_workers_spots, axis=0
+                            global_workers_spots, axis=0, dtype=np.float32
                         )
 
                         # Adding picked spots to global list of spots
@@ -491,6 +493,9 @@ def z1_puncta_detection(
                                 global_workers_spots,
                                 axis=0,
                             )
+
+                        if spots_global_coordinate.shape[0] > 10:
+                            break
 
                 # end_spot_time = time()
                 # logger.info(
@@ -521,7 +526,7 @@ def z1_puncta_detection(
 
             if worker_response is not None:
                 # Global coordinate points
-                global_workers_spots.append(worker_response)
+                global_workers_spots.append(worker_response.astype(np.float32))
 
         # Setting variables back to init
         curr_picked_blocks = 0
@@ -529,7 +534,9 @@ def z1_puncta_detection(
 
         # Concatenate worker spots
         if len(global_workers_spots):
-            global_workers_spots = np.concatenate(global_workers_spots, axis=0)
+            global_workers_spots = np.concatenate(
+                global_workers_spots, axis=0, dtype=np.float32
+            )
 
             # Adding picked spots to global list of spots
             if spots_global_coordinate is None:
@@ -548,7 +555,8 @@ def z1_puncta_detection(
         logger.info("No spots found!")
 
     else:
-        spots_global_coordinate = spots_global_coordinate.astype(np.int32)
+        print("Spots after concat: ", spots_global_coordinate)
+        spots_global_coordinate = spots_global_coordinate.astype(np.float32)
         # Final prunning, might be spots in boundaries where spots where splitted
         start_final_prunning_time = time()
         spots_global_coordinate_prunned, removed_pos = prune_blobs(

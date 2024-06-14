@@ -587,20 +587,18 @@ def traditional_3D_spot_detection(
                 f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"  # noqa: E501
             )
 
-        results_np = np.array(results).astype(np.int32)
+        puncta = np.array(results).astype(np.float32)
 
-        if not len(results_np):
+        if not len(puncta):
             return None
 
-        puncta = results_np[:, :3]
-
-        data_block = data_block.get()
-
-        # Making sure buffer radius is correct
-        if buffer_radius is None or buffer_radius < context_radius:
-            buffer_radius = context_radius * 2
-
         if run_context_estimates:
+
+            data_block = data_block.get()
+
+            # Making sure buffer radius is correct
+            if buffer_radius is None or buffer_radius < context_radius:
+                buffer_radius = context_radius * 2
 
             # Estimating spots foreground - background
             spots_fg_bg = np.array(
@@ -619,4 +617,5 @@ def traditional_3D_spot_detection(
             # horizontal stacking
             puncta = np.append(puncta.T, spots_fg_bg.T, axis=0).T
 
+    print("Puncta: ", puncta)
     return puncta
