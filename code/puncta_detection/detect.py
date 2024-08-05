@@ -20,7 +20,6 @@ from aind_large_scale_prediction.io import ImageReaderFactory
 from neuroglancer import CoordinateSpace
 
 from ._shared.types import ArrayLike, PathLike
-# from lazy_deskewing import (create_dispim_config, create_dispim_transform, lazy_deskewing)
 from .traditional_detection.puncta_detection_optimized import (
     prune_blobs, traditional_3D_spot_detection)
 from .utils import utils
@@ -235,19 +234,6 @@ def execute_worker(
                 )
 
     return global_worker_spots
-
-
-def _execute_worker(params: Dict):
-    """
-    Worker interface to provide parameters
-
-    Parameters
-    ----------
-    params: Dict
-        Dictionary with the parameters to provide
-        to the execution function.
-    """
-    return execute_worker(**params)
 
 
 def producer(
