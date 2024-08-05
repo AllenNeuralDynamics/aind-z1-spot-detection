@@ -14,7 +14,6 @@ from multiprocessing.managers import BaseManager, NamespaceProxy
 from pathlib import Path
 from typing import Dict, List, Union
 
-import neuroglancer
 import numpy as np
 
 from . import utils

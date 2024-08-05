@@ -7,7 +7,7 @@ import multiprocessing
 import os
 # from functools import partial
 from time import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cupy
 import numpy as np
@@ -250,6 +250,128 @@ def _execute_worker(params: Dict):
     return execute_worker(**params)
 
 
+def producer(
+    producer_queue,
+    zarr_data_loader,
+    logger,
+    n_consumers,
+):
+    """
+    Function that sends blocks of data to
+    the queue to be acquired by the workers.
+
+    Parameters
+    ----------
+    producer_queue: multiprocessing.Queue
+        Multiprocessing queue where blocks
+        are sent to be acquired by workers.
+
+    zarr_data_loader: DataLoader
+        Zarr data loader
+
+    logger: logging.Logger
+        Logging object
+
+    n_consumers: int
+        Number of consumers
+    """
+    # total_samples = sum(zarr_dataset.internal_slice_sum)
+    worker_pid = os.getpid()
+
+    logger.info(f"Starting producer queue: {worker_pid}")
+    for i, sample in enumerate(zarr_data_loader):
+
+        producer_queue.put(
+            {
+                "data_block": sample.batch_tensor.numpy()[0, ...],
+                "i": i,
+                "batch_super_chunk": sample.batch_super_chunk[0],
+                "batch_internal_slice": sample.batch_internal_slice,
+            },
+            block=True,
+        )
+        logger.info(f"[+] Worker {worker_pid} setting block {i}")
+
+    for i in range(n_consumers):
+        producer_queue.put(None, block=True)
+
+    # zarr_dataset.lazy_data.shape
+    logger.info(f"[+] Worker {worker_pid} -> Producer finished producing data.")
+
+
+def consumer(
+    queue,
+    zarr_dataset,
+    worker_params,
+    results_dict,
+):
+    """
+    Function executed in every worker
+    to acquire data.
+
+    Parameters
+    ----------
+    queue: multiprocessing.Queue
+        Multiprocessing queue where blocks
+        are sent to be acquired by workers.
+
+    zarr_dataset: ArrayLike
+        Zarr dataset
+
+    worker_params: dict
+        Worker parametes to execute a function.
+
+    results_dict: multiprocessing.Dict
+        Results dictionary where outputs
+        are stored.
+    """
+    worker_spots = None
+    logger = worker_params["logger"]
+    worker_pid = os.getpid()
+    logger.info(f"Starting consumer worker -> {worker_pid}")
+
+    # Start processing
+    total_samples = sum(zarr_dataset.internal_slice_sum)
+
+    # Getting data until queue is empty
+    while True:
+        streamed_dict = queue.get(block=True)
+
+        if streamed_dict is None:
+            logger.info(f"[-] Worker {worker_pid} -> Turn off signal received...")
+            break
+
+        logger.info(
+            f"[-] Worker {worker_pid} -> Consuming {streamed_dict['i']} - {streamed_dict['data_block'].shape} - Super chunk val: {zarr_dataset.curr_super_chunk_pos.value} - internal slice sum: {total_samples}"
+        )
+
+        # Getting spots
+        worker_response = execute_worker(
+            data=streamed_dict["data_block"],
+            batch_super_chunk=streamed_dict["batch_super_chunk"],
+            batch_internal_slice=streamed_dict["batch_internal_slice"],
+            spot_parameters=worker_params["spot_parameters"],
+            overlap_prediction_chunksize=worker_params["overlap_prediction_chunksize"],
+            dataset_shape=worker_params["dataset_shape"],
+            logger=worker_params["logger"],
+        )
+
+        if worker_response is not None:
+
+            if worker_spots is None:
+                worker_spots = worker_response.copy()
+
+            else:
+                worker_spots = np.append(
+                    worker_spots,
+                    worker_response,
+                    axis=0,
+                )
+
+    logger.info(f"[-] Worker {worker_pid} -> Consumer finished consuming data.")
+    results_dict[worker_pid] = worker_spots
+
+
 def z1_puncta_detection(
     dataset_path: PathLike,
     multiscale: str,
@@ -410,137 +532,55 @@ def z1_puncta_detection(
 
     start_time = time()
 
-    total_batches = np.prod(zarr_dataset.lazy_data.shape) / (
-        np.prod(zarr_dataset.prediction_chunksize) * batch_size
-    )
-    samples_per_iter = n_workers * batch_size
+    total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
+
     logger.info(f"Number of batches: {total_batches}")
     spots_global_coordinate = None
 
     # Setting exec workers to CO CPUs
     exec_n_workers = co_cpus
 
-    # Create a pool of processes
-    pool = multiprocessing.Pool(processes=exec_n_workers)
+    # Create consumer processes
+    factor = 10
 
-    # Variables for multiprocessing
-    picked_blocks = []
-    curr_picked_blocks = 0
+    # Create a multiprocessing queue
+    producer_queue = multiprocessing.Queue(maxsize=exec_n_workers * factor)
+    results_dict = manager.dict()
 
-    logger.info(f"Number of workers processing data: {exec_n_workers}")
-    with cupy.cuda.Device(device=device):
-        with cupy.cuda.Stream.null:
-            for i, sample in enumerate(zarr_data_loader):
-                logger.info(
-                    f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
-                )
+    worker_params = {
+        "overlap_prediction_chunksize": overlap_prediction_chunksize,
+        "dataset_shape": zarr_dataset.lazy_data.shape,
+        "spot_parameters": spot_parameters,
+        "logger": logger,
+    }
 
-                # start_spot_time = time()
+    logger.info(f"Setting up {exec_n_workers} workers...")
+    consumers = [
+        multiprocessing.Process(
+            target=consumer,
+            args=(
+                producer_queue,
+                zarr_dataset,
+                worker_params,
+                results_dict,
+            ),
+        )
+        for _ in range(exec_n_workers)
+    ]
 
-                picked_blocks.append(
-                    {
-                        "data": sample.batch_tensor,
-                        "batch_super_chunk": sample.batch_super_chunk[0],
-                        "batch_internal_slice": sample.batch_internal_slice,
-                        "overlap_prediction_chunksize": overlap_prediction_chunksize,
-                        "dataset_shape": zarr_dataset.lazy_data.shape,
-                        "spot_parameters": spot_parameters,
-                        "logger": logger,
-                    }
-                )
-                curr_picked_blocks += 1
+    # Start consumer processes
+    for consumer_process in consumers:
+        consumer_process.start()
 
-                if curr_picked_blocks == exec_n_workers:
-                    # Assigning blocks to execution workers
-                    jobs = [
-                        pool.apply_async(_execute_worker, args=(picked_block,))
-                        for picked_block in picked_blocks
-                    ]
+    # Main process acts as the producer
+    producer(producer_queue, zarr_data_loader, logger, exec_n_workers)
 
-                    logger.info(
-                        f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
-                    )
+    # Wait for consumer processes to finish
+    for consumer_process in consumers:
+        consumer_process.join()
 
-                    global_workers_spots = []
-
-                    # Wait for all processes to finish
-                    for job in jobs:
-                        worker_response = job.get()
-
-                        if worker_response is not None:
-                            # Global coordinate points
-                            global_workers_spots.append(worker_response)
-
-                    # Setting variables back to init
-                    curr_picked_blocks = 0
-                    picked_blocks = []
-
-                    # Concatenate worker spots
-                    if len(global_workers_spots):
-                        global_workers_spots = np.concatenate(
-                            global_workers_spots, axis=0
-                        )
-
-                        # Adding picked spots to global list of spots
-                        if spots_global_coordinate is None:
-                            spots_global_coordinate = global_workers_spots.copy()
-
-                        else:
-                            spots_global_coordinate = np.append(
-                                spots_global_coordinate,
-                                global_workers_spots,
-                                axis=0,
-                            )
-
-                # end_spot_time = time()
-                # logger.info(
-                #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
-                # )
-
-                if i + samples_per_iter > total_batches:
-                    logger.info(
-                        f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
-                    )
-                    break
-
-    if curr_picked_blocks != 0:
-        logger.info(f"Blocks not processed inside of loop: {curr_picked_blocks}")
-        # Assigning blocks to execution workers
-        jobs = [
-            pool.apply_async(_execute_worker, args=(picked_block,))
-            for picked_block in picked_blocks
-        ]
-
-        logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
-
-        global_workers_spots = []
-
-        # Wait for all processes to finish
-        for job in jobs:
-            worker_response = job.get()
-
-            if worker_response is not None:
-                # Global coordinate points
-                global_workers_spots.append(worker_response)
-
-        # Setting variables back to init
-        curr_picked_blocks = 0
-        picked_blocks = []
-
-        # Concatenate worker spots
-        if len(global_workers_spots):
-            global_workers_spots = np.concatenate(global_workers_spots, axis=0)
-
-            # Adding picked spots to global list of spots
-            if spots_global_coordinate is None:
-                spots_global_coordinate = global_workers_spots.copy()
-
-            else:
-                spots_global_coordinate = np.append(
-                    spots_global_coordinate,
-                    global_workers_spots,
-                    axis=0,
-                )
+    # All spots must be in the shared dictionary
+    spots_global_coordinate = np.concatenate(list(results_dict.values()), axis=0)
 
     end_time = time()
 

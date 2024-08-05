@@ -147,7 +147,7 @@ def create_logger(output_log_path: str) -> logging.Logger:
         Created logger pointing to
         the file path.
     """
-    CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    # CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     LOGS_FILE = f"{output_log_path}/puncta_log.log"  # _{CURR_DATE_TIME}
 
     logging.basicConfig(

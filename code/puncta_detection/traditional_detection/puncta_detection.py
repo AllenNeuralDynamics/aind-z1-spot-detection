@@ -318,7 +318,6 @@ def traditional_3D_spot_detection(
         logger.info(
             f"Initial spots time: {initial_spots_end_time - initial_spots_start_time}"
         )
-    len_spots = len(initial_spots) if initial_spots is not None else None
 
     if (
         initial_spots is not None

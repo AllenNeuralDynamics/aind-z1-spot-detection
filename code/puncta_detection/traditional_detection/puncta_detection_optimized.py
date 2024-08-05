@@ -4,7 +4,6 @@ Modified by: Camilo Laiton
 """
 
 import logging
-import os
 from copy import copy
 from time import time
 from typing import List, Optional, Tuple
