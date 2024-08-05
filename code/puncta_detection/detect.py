@@ -106,6 +106,16 @@ def remove_points_in_pad_area(
     return unpadded_points
 
 
+def free_gpu_memory(func):
+    def wrapper_func(*args, **kwargs):
+        retval = func(*args, **kwargs)
+        cupy._default_memory_pool.free_all_blocks()
+        return retval
+
+    return wrapper_func
+
+
+@free_gpu_memory
 def execute_worker(
     data: ArrayLike,
     batch_super_chunk: Tuple[slice],
@@ -266,6 +276,8 @@ def producer(
 
     logger.info(f"Starting producer queue: {worker_pid}")
     for i, sample in enumerate(zarr_data_loader):
+        if i == 2000:
+            break
 
         producer_queue.put(
             {
@@ -319,40 +331,46 @@ def consumer(
     # Start processing
     total_samples = sum(zarr_dataset.internal_slice_sum)
 
-    # Getting data until queue is empty
-    while True:
-        streamed_dict = queue.get(block=True)
+    with cupy.cuda.Device(device=worker_params["device"]):
+        with cupy.cuda.Stream.null:
+            # Getting data until queue is empty
+            while True:
+                streamed_dict = queue.get(block=True)
 
-        if streamed_dict is None:
-            logger.info(f"[-] Worker {worker_pid} -> Turn off signal received...")
-            break
+                if streamed_dict is None:
+                    logger.info(
+                        f"[-] Worker {worker_pid} -> Turn off signal received..."
+                    )
+                    break
 
-        logger.info(
-            f"[-] Worker {worker_pid} -> Consuming {streamed_dict['i']} - {streamed_dict['data_block'].shape} - Super chunk val: {zarr_dataset.curr_super_chunk_pos.value} - internal slice sum: {total_samples}"
-        )
-
-        # Getting spots
-        worker_response = execute_worker(
-            data=streamed_dict["data_block"],
-            batch_super_chunk=streamed_dict["batch_super_chunk"],
-            batch_internal_slice=streamed_dict["batch_internal_slice"],
-            spot_parameters=worker_params["spot_parameters"],
-            overlap_prediction_chunksize=worker_params["overlap_prediction_chunksize"],
-            dataset_shape=worker_params["dataset_shape"],
-            logger=worker_params["logger"],
-        )
-
-        if worker_response is not None:
-
-            if worker_spots is None:
-                worker_spots = worker_response.copy()
-
-            else:
-                worker_spots = np.append(
-                    worker_spots,
-                    worker_response,
-                    axis=0,
+                logger.info(
+                    f"[-] Worker {worker_pid} -> Consuming {streamed_dict['i']} - {streamed_dict['data_block'].shape} - Super chunk val: {zarr_dataset.curr_super_chunk_pos.value} - internal slice sum: {total_samples}"
                 )
+
+                # Getting spots
+                worker_response = execute_worker(
+                    data=streamed_dict["data_block"],
+                    batch_super_chunk=streamed_dict["batch_super_chunk"],
+                    batch_internal_slice=streamed_dict["batch_internal_slice"],
+                    spot_parameters=worker_params["spot_parameters"],
+                    overlap_prediction_chunksize=worker_params[
+                        "overlap_prediction_chunksize"
+                    ],
+                    dataset_shape=worker_params["dataset_shape"],
+                    logger=worker_params["logger"],
+                )
+
+                if worker_response is not None:
+
+                    if worker_spots is None:
+                        worker_spots = worker_response.copy()
+
+                    else:
+                        worker_spots = np.append(
+                            worker_spots,
+                            worker_response,
+                            axis=0,
+                        )
 
     logger.info(f"[-] Worker {worker_pid} -> Consumer finished consuming data.")
     results_dict[worker_pid] = worker_spots
@@ -527,10 +545,10 @@ def z1_puncta_detection(
     exec_n_workers = co_cpus
 
     # Create consumer processes
-    factor = 10
+    factor = 2
 
     # Create a multiprocessing queue
-    producer_queue = multiprocessing.Queue(maxsize=exec_n_workers * factor)
+    producer_queue = multiprocessing.Queue(maxsize=exec_n_workers)
     results_dict = manager.dict()
 
     worker_params = {
@@ -538,6 +556,7 @@ def z1_puncta_detection(
         "dataset_shape": zarr_dataset.lazy_data.shape,
         "spot_parameters": spot_parameters,
         "logger": logger,
+        "device": device,
     }
 
     logger.info(f"Setting up {exec_n_workers} workers...")
@@ -566,7 +585,8 @@ def z1_puncta_detection(
         consumer_process.join()
 
     # All spots must be in the shared dictionary
-    spots_global_coordinate = np.concatenate(list(results_dict.values()), axis=0)
+    spot_list = list(results_dict.values())
+    spots_global_coordinate = np.concatenate(spot_list, axis=0)
 
     end_time = time()
 

@@ -42,7 +42,7 @@ def prune_blobs(
         Removed spots positions
     """
     tree = spatial.cKDTree(blobs_array[:, :3])
-    pairs = np.array(list(tree.query_pairs(distance, eps=eps)))
+    pairs = np.array(list(tree.query_pairs(distance, eps=eps)), dtype=np.uint16)
     removed_positions = []
     for i, j in pairs:
         blob1, blob2 = blobs_array[i], blobs_array[j]
@@ -409,7 +409,7 @@ def traditional_3D_spot_detection(
                 f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
             )
 
-        results_np = np.array(results).astype(np.int32)
+        results_np = np.array(results).astype(np.int16)
 
         if not len(results_np):
             return None
