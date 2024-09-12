@@ -5,6 +5,7 @@ Large-scale puncta detection using single GPU
 import logging
 import multiprocessing
 import os
+import gc
 # from functools import partial
 from time import time
 from typing import Dict, List, Optional, Tuple
@@ -391,7 +392,7 @@ def z1_puncta_detection(
         target_size_mb=target_size_mb,
         prediction_chunksize=prediction_chunksize,
         overlap_prediction_chunksize=overlap_prediction_chunksize,
-        n_workers=n_workers,
+        n_workers=1,
         batch_size=batch_size,
         dtype=np.float32,  # Allowed data type to process with pytorch cuda
         super_chunksize=super_chunksize,
@@ -421,126 +422,128 @@ def z1_puncta_detection(
     exec_n_workers = co_cpus
 
     # Create a pool of processes
-    pool = multiprocessing.Pool(processes=exec_n_workers)
 
-    # Variables for multiprocessing
-    picked_blocks = []
-    curr_picked_blocks = 0
+    with multiprocessing.Pool(processes=exec_n_workers) as pool:
+    # pool = multiprocessing.Pool(processes=exec_n_workers)
 
-    logger.info(f"Number of workers processing data: {exec_n_workers}")
-    with cupy.cuda.Device(device=device):
-        with cupy.cuda.Stream.null:
-            for i, sample in enumerate(zarr_data_loader):
-                logger.info(
-                    f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
-                )
-
-                # start_spot_time = time()
-
-                picked_blocks.append(
-                    {
-                        "data": sample.batch_tensor,
-                        "batch_super_chunk": sample.batch_super_chunk[0],
-                        "batch_internal_slice": sample.batch_internal_slice,
-                        "overlap_prediction_chunksize": overlap_prediction_chunksize,
-                        "dataset_shape": zarr_dataset.lazy_data.shape,
-                        "spot_parameters": spot_parameters,
-                        "logger": logger,
-                    }
-                )
-                curr_picked_blocks += 1
-
-                if curr_picked_blocks == exec_n_workers:
-                    # Assigning blocks to execution workers
-                    jobs = [
-                        pool.apply_async(_execute_worker, args=(picked_block,))
-                        for picked_block in picked_blocks
-                    ]
-
-                    logger.info(
-                        f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
-                    )
-
-                    global_workers_spots = []
-
-                    # Wait for all processes to finish
-                    for job in jobs:
-                        worker_response = job.get()
-
-                        if worker_response is not None:
-                            # Global coordinate points
-                            global_workers_spots.append(worker_response)
-
-                    # Setting variables back to init
-                    curr_picked_blocks = 0
-                    picked_blocks = []
-
-                    # Concatenate worker spots
-                    if len(global_workers_spots):
-                        global_workers_spots = np.concatenate(
-                            global_workers_spots, axis=0
-                        )
-
-                        # Adding picked spots to global list of spots
-                        if spots_global_coordinate is None:
-                            spots_global_coordinate = global_workers_spots.copy()
-
-                        else:
-                            spots_global_coordinate = np.append(
-                                spots_global_coordinate,
-                                global_workers_spots,
-                                axis=0,
-                            )
-
-                # end_spot_time = time()
-                # logger.info(
-                #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
-                # )
-
-                if i + samples_per_iter > total_batches:
-                    logger.info(
-                        f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
-                    )
-                    break
-
-    if curr_picked_blocks != 0:
-        logger.info(f"Blocks not processed inside of loop: {curr_picked_blocks}")
-        # Assigning blocks to execution workers
-        jobs = [
-            pool.apply_async(_execute_worker, args=(picked_block,))
-            for picked_block in picked_blocks
-        ]
-
-        logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
-
-        global_workers_spots = []
-
-        # Wait for all processes to finish
-        for job in jobs:
-            worker_response = job.get()
-
-            if worker_response is not None:
-                # Global coordinate points
-                global_workers_spots.append(worker_response)
-
-        # Setting variables back to init
-        curr_picked_blocks = 0
+        # Variables for multiprocessing
         picked_blocks = []
-
-        # Concatenate worker spots
-        if len(global_workers_spots):
-            global_workers_spots = np.concatenate(global_workers_spots, axis=0)
-
-            # Adding picked spots to global list of spots
-            if spots_global_coordinate is None:
-                spots_global_coordinate = global_workers_spots.copy()
-
-            else:
-                spots_global_coordinate = np.append(
-                    spots_global_coordinate,
-                    global_workers_spots,
-                    axis=0,
-                )
+        curr_picked_blocks = 0
+    
+        logger.info(f"Number of workers processing data: {exec_n_workers}")
+        with cupy.cuda.Device(device=device):
+            with cupy.cuda.Stream.null:
+                for i, sample in enumerate(zarr_data_loader):
+                    logger.info(
+                        f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+                    )
+    
+                    # start_spot_time = time()
+    
+                    picked_blocks.append(
+                        {
+                            "data": sample.batch_tensor,
+                            "batch_super_chunk": sample.batch_super_chunk[0],
+                            "batch_internal_slice": sample.batch_internal_slice,
+                            "overlap_prediction_chunksize": overlap_prediction_chunksize,
+                            "dataset_shape": zarr_dataset.lazy_data.shape,
+                            "spot_parameters": spot_parameters,
+                            "logger": logger,
+                        }
+                    )
+                    curr_picked_blocks += 1
+    
+                    if curr_picked_blocks == exec_n_workers:
+                        # Assigning blocks to execution workers
+                        jobs = [
+                            pool.apply_async(_execute_worker, args=(picked_block,))
+                            for picked_block in picked_blocks
+                        ]
+    
+                        logger.info(
+                            f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
+                        )
+    
+                        global_workers_spots = []
+    
+                        # Wait for all processes to finish
+                        for job in jobs:
+                            worker_response = job.get()
+    
+                            if worker_response is not None:
+                                # Global coordinate points
+                                global_workers_spots.append(worker_response)
+    
+                        # Setting variables back to init
+                        curr_picked_blocks = 0
+                        picked_blocks = []
+    
+                        # Concatenate worker spots
+                        if len(global_workers_spots):
+                            global_workers_spots = np.concatenate(
+                                global_workers_spots, axis=0
+                            )
+    
+                            # Adding picked spots to global list of spots
+                            if spots_global_coordinate is None:
+                                spots_global_coordinate = global_workers_spots.copy()
+    
+                            else:
+                                spots_global_coordinate = np.append(
+                                    spots_global_coordinate,
+                                    global_workers_spots,
+                                    axis=0,
+                                )
+    
+                    # end_spot_time = time()
+                    # logger.info(
+                    #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
+                    # )
+    
+                    if i + samples_per_iter > total_batches:
+                        logger.info(
+                            f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
+                        )
+                        break
+    
+        if curr_picked_blocks != 0:
+            logger.info(f"Blocks not processed inside of loop: {curr_picked_blocks}")
+            # Assigning blocks to execution workers
+            jobs = [
+                pool.apply_async(_execute_worker, args=(picked_block,))
+                for picked_block in picked_blocks
+            ]
+    
+            logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
+    
+            global_workers_spots = []
+    
+            # Wait for all processes to finish
+            for job in jobs:
+                worker_response = job.get()
+    
+                if worker_response is not None:
+                    # Global coordinate points
+                    global_workers_spots.append(worker_response)
+    
+            # Setting variables back to init
+            curr_picked_blocks = 0
+            picked_blocks = []
+    
+            # Concatenate worker spots
+            if len(global_workers_spots):
+                global_workers_spots = np.concatenate(global_workers_spots, axis=0)
+    
+                # Adding picked spots to global list of spots
+                if spots_global_coordinate is None:
+                    spots_global_coordinate = global_workers_spots.copy()
+    
+                else:
+                    spots_global_coordinate = np.append(
+                        spots_global_coordinate,
+                        global_workers_spots,
+                        axis=0,
+                    )
 
     end_time = time()
 
@@ -575,7 +578,7 @@ def z1_puncta_detection(
 
         logger.info(f"Neuroglancer coordinate space: {coord_space}")
         generate_precomputed_spots(
-            spots=spots_global_coordinate_prunned[:, :3],  # Only ZYX locations
+            spots=spots_global_coordinate_prunned[:, :3].copy(),  # Only ZYX locations
             path=f"{output_folder}/precomputed",
             res=coord_space,
         )
@@ -585,6 +588,10 @@ def z1_puncta_detection(
         # Saving spots
         np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
 
+    # Closing pool of workers
+    # pool.close()
+    # pool.join()
+    
     # Getting tracked resources and plotting image
     utils.stop_child_process(profile_process)
 
