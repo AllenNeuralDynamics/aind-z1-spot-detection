@@ -44,7 +44,7 @@ def main():
     data_folder = os.path.abspath("../data")
     scratch_folder = os.path.abspath("../scratch")
     
-    folders_to_process = [p.name for p in Path(data_folder).glob("*_registered_*")]
+    folders_to_process = [p.name for p in Path(f"{data_folder}/hcr_kevins_data_upsampled_masks_r1").glob("HCR*")]
 
     print(f"Folders to process: {folders_to_process}")
     channels_to_process = ["561", "638"]
@@ -64,7 +64,7 @@ def main():
     for folder in folders_to_process:
 
         print(f"PROCESSING CELLS OF {folder}")
-        raw_folder = Path(data_folder).joinpath(folder.split("_registered_")[0])
+        raw_folder = Path(data_folder).joinpath(folder)
 
         if raw_folder.name in ignore_list or not raw_folder.exists():
             print(f"Ignoring {raw_folder.name}. Check the ignore list or if the folder exists.")
@@ -82,7 +82,8 @@ def main():
                     channel_zarr_path = channel_paths[0]
 
                     # Segmentation path
-                    segmentation_path = Path(data_folder).joinpath(f"{folder}/transform/transformed_masks.zarr")
+                    segmentation_path = Path(data_folder).joinpath(f"hcr_kevins_data_upsampled_masks_r1/{folder}/segmentation_mask.zarr")
+                    #Path(data_folder).joinpath(f"{folder}/transform/transformed_masks.zarr")
 
                     if not segmentation_path.exists() or not channel_zarr_path.exists():
                         raise ValueError(f"Problem processing channel {channel_zarr_path} with seg path: {segmentation_path}")
