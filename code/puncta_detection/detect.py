@@ -534,11 +534,6 @@ def z1_puncta_detection(
                     #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
                     # )
 
-                    if spots_global_coordinate is not None and len(
-                        spots_global_coordinate
-                    ):
-                        break
-
                     if i + samples_per_iter > total_batches:
                         logger.info(
                             f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
