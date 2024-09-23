@@ -6,7 +6,8 @@ from pathlib import Path
 from puncta_detection.detect import z1_puncta_detection
 from puncta_detection.utils import utils
 
-def create_folder(dest_dir, verbose = False) -> None:
+
+def create_folder(dest_dir, verbose=False) -> None:
     """
     Create new folders.
 
@@ -36,6 +37,7 @@ def create_folder(dest_dir, verbose = False) -> None:
             if e.errno != os.errno.EEXIST:
                 raise
 
+
 def main():
     """Runs large-scale cell segmentation"""
 
@@ -43,8 +45,11 @@ def main():
     results_folder = os.path.abspath("../results")
     data_folder = os.path.abspath("../data")
     scratch_folder = os.path.abspath("../scratch")
-    
-    folders_to_process = [p.name for p in Path(f"{data_folder}/hcr_kevins_data_upsampled_masks_r1").glob("HCR*")]
+
+    folders_to_process = [
+        p.name
+        for p in Path(f"{data_folder}/hcr_kevins_data_upsampled_masks_r1").glob("HCR*")
+    ]
 
     print(f"Folders to process: {folders_to_process}")
     channels_to_process = ["561", "638"]
@@ -59,44 +64,56 @@ def main():
     context_radius = 3
     radius_confidence = 0.05
 
-    ignore_list = [] # "HCR_744360-ROI-N1_2024-09-05_14-00-00"
-    
+    ignore_list = []  # "HCR_744360-ROI-N1_2024-09-05_14-00-00"
+
     for folder in folders_to_process:
 
         print(f"PROCESSING CELLS OF {folder}")
         raw_folder = Path(data_folder).joinpath(folder)
 
         if raw_folder.name in ignore_list or not raw_folder.exists():
-            print(f"Ignoring {raw_folder.name}. Check the ignore list or if the folder exists.")
+            print(
+                f"Ignoring {raw_folder.name}. Check the ignore list or if the folder exists."
+            )
 
         else:
             curr_results = Path(results_folder).joinpath(f"{raw_folder.name}_puncta")
-    
+
             print(f"Raw folder {raw_folder} - {curr_results}")
 
             for chn in channels_to_process:
-                channel_paths = list(raw_folder.joinpath("corrected.ome.zarr").glob(f"*{chn}.zarr"))
+                channel_paths = list(
+                    raw_folder.joinpath("corrected.ome.zarr").glob(f"*{chn}.zarr")
+                )
                 if len(channel_paths) == 1:
 
                     # Channel zarr path
                     channel_zarr_path = channel_paths[0]
 
                     # Segmentation path
-                    segmentation_path = Path(data_folder).joinpath(f"hcr_kevins_data_upsampled_masks_r1/{folder}/segmentation_mask.zarr")
-                    #Path(data_folder).joinpath(f"{folder}/transform/transformed_masks.zarr")
+                    segmentation_path = Path(data_folder).joinpath(
+                        f"hcr_kevins_data_upsampled_masks_r1/{folder}/segmentation_mask.zarr"
+                    )
+                    # Path(data_folder).joinpath(f"{folder}/transform/transformed_masks.zarr")
 
                     if not segmentation_path.exists() or not channel_zarr_path.exists():
-                        raise ValueError(f"Problem processing channel {channel_zarr_path} with seg path: {segmentation_path}")
-                    
+                        raise ValueError(
+                            f"Problem processing channel {channel_zarr_path} with seg path: {segmentation_path}"
+                        )
+
                     channel_results = curr_results.joinpath(chn)
 
                     if channel_results.joinpath("spots.npy").exists():
-                        print(f"Ignoring {channel_results} because it already has spots.")
+                        print(
+                            f"Ignoring {channel_results} because it already has spots."
+                        )
                     else:
                         create_folder(channel_results)
-    
-                        logger = utils.create_logger(output_log_path=str(channel_results))
-                    
+
+                        logger = utils.create_logger(
+                            output_log_path=str(channel_results)
+                        )
+
                         # Data loader params
                         puncta_params = {
                             "dataset_path": str(channel_zarr_path),
@@ -120,16 +137,16 @@ def main():
                                 "radius_confidence": radius_confidence,
                             },
                         }
-                    
+
                         logger.info(
                             f"Dataset path: {puncta_params['dataset_path']} - Puncta detection params: {puncta_params}"
                         )
-                    
+
                         z1_puncta_detection(**puncta_params)
-                                    
+
                 else:
                     print(f"Channel {chn} not in dataset {raw_folder}")
-        
+
 
 if __name__ == "__main__":
     main()

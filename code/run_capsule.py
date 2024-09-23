@@ -20,18 +20,14 @@ def run():
     DATA_FOLDER = Path(os.path.abspath("../data"))
 
     # Output folder
-    output_folder = RESULTS_FOLDER.joinpath("puncta_detection_results")
+    output_folder = RESULTS_FOLDER
     utils.create_folder(dest_dir=str(output_folder), verbose=True)
 
     # Data
-    # BUCKET_NAME = "aind-open-data"
-    # IMAGE_PATH = "HCR_BL6-000_2023-06-1_00-00-00_fused_2024-02-09_13-28-49/channel_2.zarr"
-    IMAGE_PATH = (
-        "HCR_744363-ROI-N2_2024-09-05_16-00-00/SPIM.ome.zarr/Tile_X_0000_Y_0000_Z_0000_ch_561.zarr"
-    )
+    IMAGE_PATH = "HCR_736207-01_2024-08-08_13-00-00/fused/channel_638.zarr"
 
     DATA_PATH = f"{DATA_FOLDER}/{IMAGE_PATH}"
-    SEGMENTATION_PATH = "../data/HCR_744363-ROI-N2_2024-09-05_16-00-00_registered_2024-09-06_17-39-34/transform/transformed_masks.zarr"  # f"{DATA_FOLDER}/upscaled_masks_R0_01.zarr"
+    SEGMENTATION_PATH = f"{DATA_FOLDER}/HCR_736207-01_2024-08-08_13-00-00_upsampled-masks/segmentation_mask.zarr"
     # If using the bucket path directly, provide credentials to the capsule
     # f"s3://{BUCKET_NAME}/{IMAGE_PATH}"
 

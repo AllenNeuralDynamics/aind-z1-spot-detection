@@ -2,16 +2,17 @@
 Large-scale puncta detection using single GPU
 """
 
+import gc
 import logging
 import multiprocessing
 import os
-import gc
 # from functools import partial
 from time import time
 from typing import Dict, List, Optional, Tuple
 
 import cupy
 import numpy as np
+import pandas as pd
 import psutil
 import torch
 from aind_large_scale_prediction.generator.dataset import create_data_loader
@@ -22,7 +23,7 @@ from neuroglancer import CoordinateSpace
 
 from ._shared.types import ArrayLike, PathLike
 # from lazy_deskewing import (create_dispim_config, create_dispim_transform, lazy_deskewing)
-from .traditional_detection.puncta_detection_optimized import (
+from .traditional_detection.puncta_detection import (
     prune_blobs, traditional_3D_spot_detection)
 from .utils import utils
 from .utils.generate_precomputed_format import generate_precomputed_spots
@@ -251,6 +252,52 @@ def _execute_worker(params: Dict):
     return execute_worker(**params)
 
 
+def helper_submit_jobs(
+    picked_blocks: List[dict], pool: multiprocessing.Pool
+) -> ArrayLike:
+    """
+    Helper function that submits jobs and collects
+    the results from the jobs.
+
+    Parameters
+    ----------
+    picked_blocks: List[dict]
+        List with the parameters that will be passed
+        to the execute_worker function.
+
+    pool: multiprocessing.Pool
+        Pool of workers
+
+    Returns
+    -------
+    Returns the concatenated spots from workers
+    """
+    # Assigning blocks to execution workers
+    jobs = [
+        pool.apply_async(_execute_worker, args=(picked_block,))
+        for picked_block in picked_blocks
+    ]
+
+    global_workers_spots = []
+
+    # Wait for all processes to finish
+    for job in jobs:
+        worker_response = job.get()
+
+        if worker_response is not None:
+            # Global coordinate points
+            global_workers_spots.append(worker_response)
+
+    # Concatenate worker spots
+    if len(global_workers_spots):
+        # Concatenating lists to numpy array
+        global_workers_spots = np.concatenate(global_workers_spots, axis=0)
+    else:
+        global_workers_spots = np.array(global_workers_spots)
+
+    return global_workers_spots
+
+
 def z1_puncta_detection(
     dataset_path: PathLike,
     multiscale: str,
@@ -424,12 +471,12 @@ def z1_puncta_detection(
     # Create a pool of processes
 
     with multiprocessing.Pool(processes=exec_n_workers) as pool:
-    # pool = multiprocessing.Pool(processes=exec_n_workers)
+        # pool = multiprocessing.Pool(processes=exec_n_workers)
 
         # Variables for multiprocessing
         picked_blocks = []
         curr_picked_blocks = 0
-    
+
         logger.info(f"Number of workers processing data: {exec_n_workers}")
         with cupy.cuda.Device(device=device):
             with cupy.cuda.Stream.null:
@@ -437,9 +484,9 @@ def z1_puncta_detection(
                     logger.info(
                         f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
                     )
-    
+
                     # start_spot_time = time()
-    
+
                     picked_blocks.append(
                         {
                             "data": sample.batch_tensor,
@@ -452,98 +499,75 @@ def z1_puncta_detection(
                         }
                     )
                     curr_picked_blocks += 1
-    
+
                     if curr_picked_blocks == exec_n_workers:
-                        # Assigning blocks to execution workers
-                        jobs = [
-                            pool.apply_async(_execute_worker, args=(picked_block,))
-                            for picked_block in picked_blocks
-                        ]
-    
                         logger.info(
-                            f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs"
+                            f"Dispatcher PID {os.getpid()} dispatching {curr_picked_blocks} jobs"
                         )
-    
-                        global_workers_spots = []
-    
-                        # Wait for all processes to finish
-                        for job in jobs:
-                            worker_response = job.get()
-    
-                            if worker_response is not None:
-                                # Global coordinate points
-                                global_workers_spots.append(worker_response)
-    
+                        global_workers_spots = helper_submit_jobs(picked_blocks, pool)
+
+                        # Adding picked spots to global list of spots
+                        # I could've done this inside helper_submit_jobs but
+                        # it'd be a bad programming practice
+                        if (
+                            spots_global_coordinate is None
+                            and global_workers_spots.shape[0]
+                        ):
+                            spots_global_coordinate = global_workers_spots.copy()
+
+                        elif global_workers_spots.shape[0]:
+                            print(
+                                global_workers_spots.shape, global_workers_spots.shape
+                            )
+                            spots_global_coordinate = np.append(
+                                spots_global_coordinate,
+                                global_workers_spots,
+                                axis=0,
+                            )
+
                         # Setting variables back to init
                         curr_picked_blocks = 0
                         picked_blocks = []
-    
-                        # Concatenate worker spots
-                        if len(global_workers_spots):
-                            global_workers_spots = np.concatenate(
-                                global_workers_spots, axis=0
-                            )
-    
-                            # Adding picked spots to global list of spots
-                            if spots_global_coordinate is None:
-                                spots_global_coordinate = global_workers_spots.copy()
-    
-                            else:
-                                spots_global_coordinate = np.append(
-                                    spots_global_coordinate,
-                                    global_workers_spots,
-                                    axis=0,
-                                )
-    
+
                     # end_spot_time = time()
                     # logger.info(
                     #     f"Time processing batch {i}: {end_spot_time - start_spot_time}"
                     # )
-    
+
+                    if spots_global_coordinate is not None and len(
+                        spots_global_coordinate
+                    ):
+                        break
+
                     if i + samples_per_iter > total_batches:
                         logger.info(
                             f"Not enough samples to retrieve from workers, remaining: {i + samples_per_iter - total_batches}"
                         )
                         break
-    
+
         if curr_picked_blocks != 0:
             logger.info(f"Blocks not processed inside of loop: {curr_picked_blocks}")
-            # Assigning blocks to execution workers
-            jobs = [
-                pool.apply_async(_execute_worker, args=(picked_block,))
-                for picked_block in picked_blocks
-            ]
-    
-            logger.info(f"Dispatcher PID {os.getpid()} dispatching {len(jobs)} jobs")
-    
-            global_workers_spots = []
-    
-            # Wait for all processes to finish
-            for job in jobs:
-                worker_response = job.get()
-    
-                if worker_response is not None:
-                    # Global coordinate points
-                    global_workers_spots.append(worker_response)
-    
+            logger.info(
+                f"Dispatcher PID {os.getpid()} dispatching {curr_picked_blocks} jobs"
+            )
+            global_workers_spots = helper_submit_jobs(picked_blocks, pool)
+            # Adding picked spots to global list of spots
+            # I could've done this inside helper_submit_jobs but
+            # it'd be a bad programming practice
+            if spots_global_coordinate is None and global_workers_spots.shape[0]:
+                spots_global_coordinate = global_workers_spots.copy()
+
+            elif global_workers_spots.shape[0]:
+                print(global_workers_spots.shape, global_workers_spots.shape)
+                spots_global_coordinate = np.append(
+                    spots_global_coordinate,
+                    global_workers_spots,
+                    axis=0,
+                )
+
             # Setting variables back to init
             curr_picked_blocks = 0
             picked_blocks = []
-    
-            # Concatenate worker spots
-            if len(global_workers_spots):
-                global_workers_spots = np.concatenate(global_workers_spots, axis=0)
-    
-                # Adding picked spots to global list of spots
-                if spots_global_coordinate is None:
-                    spots_global_coordinate = global_workers_spots.copy()
-    
-                else:
-                    spots_global_coordinate = np.append(
-                        spots_global_coordinate,
-                        global_workers_spots,
-                        axis=0,
-                    )
 
     end_time = time()
 
@@ -587,11 +611,32 @@ def z1_puncta_detection(
 
         # Saving spots
         np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
+        spots_df = pd.DataFrame(
+            spots_global_coordinate_prunned,
+            columns=[
+                "Z",
+                "Y",
+                "X",
+                "Z_center",
+                "Y_center",
+                "X_center",
+                "dist",
+                "r",
+                "SEG_ID",
+            ],
+        )
 
-    # Closing pool of workers
-    # pool.close()
-    # pool.join()
-    
+        spots_df[["Z", "Y", "X", "SEG_ID"]] = spots_df[
+            ["Z", "Y", "X", "SEG_ID"]
+        ].astype("int")
+        spots_df = spots_df.sort_values(by="SEG_ID")
+
+        # Saving spots
+        spots_df.to_csv(
+            f"{output_folder}/spots.csv",
+            index=False,
+        )
+
     # Getting tracked resources and plotting image
     utils.stop_child_process(profile_process)
 
@@ -601,5 +646,5 @@ def z1_puncta_detection(
             cpu_percentages,
             memory_usages,
             output_folder,
-            "dispim_puncta_detection",
+            "puncta_detection",
         )
