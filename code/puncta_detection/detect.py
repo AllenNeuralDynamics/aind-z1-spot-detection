@@ -210,7 +210,7 @@ def execute_worker(
                 )
                 spots = np.append(spots.T, mask_ids, axis=0).T
 
-            curr_spots = spots.copy().astype(np.int32)
+            curr_spots = spots.copy().astype(np.float32)
             # Converting to global coordinates, only to ZYX position, leaving mask ID if exists
             curr_spots[:, :3] = np.array(global_coord_positions_start)[
                 :, -3:
@@ -570,7 +570,7 @@ def z1_puncta_detection(
         logger.info("No spots found!")
 
     else:
-        spots_global_coordinate = spots_global_coordinate.astype(np.int32)
+        spots_global_coordinate = spots_global_coordinate.astype(np.float32)
         # Final prunning, might be spots in boundaries where spots where splitted
         start_final_prunning_time = time()
         spots_global_coordinate_prunned, removed_pos = prune_blobs(
