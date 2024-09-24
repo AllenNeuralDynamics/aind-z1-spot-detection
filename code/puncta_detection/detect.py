@@ -606,25 +606,21 @@ def z1_puncta_detection(
 
         # Saving spots
         np.save(f"{output_folder}/spots.npy", spots_global_coordinate_prunned)
-        spots_df = pd.DataFrame(
-            spots_global_coordinate_prunned,
-            columns=[
-                "Z",
-                "Y",
-                "X",
-                "Z_center",
-                "Y_center",
-                "X_center",
-                "dist",
-                "r",
-                "SEG_ID",
-            ],
-        )
 
-        spots_df[["Z", "Y", "X", "SEG_ID"]] = spots_df[
-            ["Z", "Y", "X", "SEG_ID"]
-        ].astype("int")
-        spots_df = spots_df.sort_values(by="SEG_ID")
+        columns = ["Z", "Y", "X", "Z_center", "Y_center", "X_center", "dist", "r"]
+        sort_column = "Z"
+        int_columns = ["Z", "Y", "X"]
+
+        # If segmentation mask is provided, let's sort by ID
+        if segmentation_mask_path:
+            columns.append("SEG_ID")
+            sort_column = "SEG_ID"
+            int_columns.append("SEG_ID")
+
+        spots_df = pd.DataFrame(spots_global_coordinate_prunned, columns=columns)
+
+        spots_df[int_columns] = spots_df[int_columns].astype("int")
+        spots_df = spots_df.sort_values(by=sort_column)
 
         # Saving spots
         spots_df.to_csv(
