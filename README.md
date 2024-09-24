@@ -12,6 +12,19 @@ Large-scale detection of spot-like structures. The algorithms included in this p
 
 This is a traditional-based algorithm, therefore, parameter tunning is required to make it work.
 
+The output of this algorithm is a CSV file with the following columns:
+
+- Z: Z location of the spot.
+- Y: Y location of the spot.
+- X: X location of the spot.
+- Z_center: Z center of the spot during the guassian fitting, useful for demixing.
+- Y_center: Y center of the spot during the guassian fitting, useful for demixing.
+- X_center: X center of the spot during the guassian fitting, useful for demixing.
+- dist: Euclidean distance or L2 norm of the ZYX center vector, $`norm = \sqrt{z^2 + y^2 + x^2}`$.
+- r: Pearson correlation coefficient between integrated 3D gaussian and the 3D context where the spot is located.
+- SEG_ID (optional): When a segmentation mask is provided, a new column is added with the segmentation ID of the detected spot.
+
+We also generate a numpy array with the values.
+
 ## Optional mask
 An additional segmentation mask can be provided to only detect spots in given areas. In our case, the segmentation mask provided is a cell segmentation mask of the entire dataset, we used a  [large-scale version of cellpose](https://github.com/AllenNeuralDynamics/aind-z1-cell-segmentation) to generate the segmentation masks.
-When segmentation masks are provided, the `spots.npy` file that is created in the output directory will contain the segmentation ID of that detected spot for further post-processing and analysis. The segmentation ID will be in the last position of the array, e.g., [..., [Z, Y, X, SEG_ID], ...].

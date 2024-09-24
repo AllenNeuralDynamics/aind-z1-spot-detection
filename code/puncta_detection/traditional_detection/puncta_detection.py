@@ -1,63 +1,63 @@
 """
 Tim's Wang puncta detection algorithm.
-Initially modified by: Camilo Laiton
+Modified by: Camilo Laiton
 """
 
 import logging
-import math
+import os
 from copy import copy
 from time import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cupy
 import numpy as np
 from cupyx.scipy.ndimage import gaussian_laplace
-from cupyx.scipy.ndimage import maximum_filter as mf
+from cupyx.scipy.ndimage import maximum_filter as cupy_maximum_filter
 from scipy import spatial
 from scipy.special import erf
 
 from .._shared.types import ArrayLike
 
 
-def get_centers_in_slice(slice_pos: int, centers: List[int]):
+def prune_blobs(
+    blobs_array: ArrayLike, distance: int, eps=0
+) -> Tuple[ArrayLike, ArrayLike]:
     """
-    Returns two list with the Y and X positions
-    of the detected puncta
+    Prune blobs based on a radius distance.
 
     Parameters
     ----------
-    slice_pos: int
-        Slice position in the array
+    blobs_array: ArrayLike
+        Array that contains the YX position of
+        the identified blobs.
 
-    centers: List[int]
-        List with the location of the puncta in
-        order YX
+    distance: int
+        Minimum distance to prune blobs
 
     Returns
     -------
-    Tuple[ List[int, int], List[int], List[int] ]
-        Returns a tuple with the identified positions
-        for that slide with the Y and X locations
-        in separate arrays
+    Tuple[ArrayLike, ArrayLike]
+    cupy.ndarray
+        Cupy array with the pruned blobs
+    np.array
+        Removed spots positions
     """
-    if isinstance(centers, cupy.ndarray):
-        centers = centers.get()
+    tree = spatial.cKDTree(blobs_array[:, :3])
+    pairs = np.array(list(tree.query_pairs(distance, eps=eps)))
+    removed_positions = []
+    for i, j in pairs:
+        blob1, blob2 = blobs_array[i], blobs_array[j]
+        if blob1[-1] > blob2[-1]:
+            removed_positions.append(j)
+            blob2[-1] = 0
+        else:
+            removed_positions.append(i)
+            blob1[-1] = 0
 
-    identified_spots = []
-    xs = []
-    ys = []
-
-    for idx in range(len(centers)):
-        if centers[idx][0] == slice_pos:
-            center = centers[idx]
-            identified_spots.append(center)
-            xs.append(center[2])
-            ys.append(center[1])
-
-    return identified_spots, xs, ys
+    return blobs_array[blobs_array[:, -1] > 0], np.array(removed_positions)
 
 
-def prune_blobs(blobs_array: ArrayLike, distance: int):
+def prune_blobs_optimized(blobs_array, distance: int, eps=0):
     """
     Prune blobs based on a radius distance.
 
@@ -75,27 +75,36 @@ def prune_blobs(blobs_array: ArrayLike, distance: int):
     cupy.ndarray
         Cupy array with the pruned blobs
     """
+    tree = spatial.cKDTree(blobs_array)
+    pairs = np.array(list(tree.query_pairs(distance, eps=eps)))
 
-    tree = spatial.cKDTree(blobs_array[:, :3])
-    pairs = np.array(list(tree.query_pairs(distance)))
-    for i, j in pairs:
-        blob1, blob2 = blobs_array[i], blobs_array[j]
-        if blob1[-1] > blob2[-1]:
-            blob2[-1] = 0
-        else:
-            blob1[-1] = 0
-    return cupy.array([b for b in blobs_array if b[-1] > 0])
+    i_indices, j_indices = zip(*pairs)
+    i_indices = np.array(i_indices)
+    j_indices = np.array(j_indices)
+
+    # print(i_indices, j_indices)
+    # Extract values from blobs_array using the indices
+    blob1_values = blobs_array[i_indices, -1]
+    blob2_values = blobs_array[j_indices, -1]
+    # print(blob1_values[0], blob2_values[0])
+
+    # Find the indices where blob1_values are greater than blob2_values
+    greater_indices = np.where(blob1_values > blob2_values)[0]
+
+    # Set values to 0 based on the comparison
+    blobs_array[i_indices[greater_indices], -1] = 0
+    blobs_array[j_indices[~greater_indices], -1] = 0
+
+    return blobs_array[blobs_array[:, -1] > 0]
 
 
 def identify_initial_spots(
     data_block: ArrayLike,
     background_percentage: int,
     sigma_zyx: List[int],
-    pad_size: int,
     min_zyx: List[int],
     filt_thresh: int,
     raw_thresh: int,
-    pad_mode: Optional[str] = "reflect",
 ):
     """
     Identifies the initial spots using Laplacian of
@@ -112,9 +121,6 @@ def identify_initial_spots(
     sigma_zyx: List[int]
         Sigmas to be applied over each axis in
         the Laplacian of Gaussian.
-
-    pad_size: int
-        Padding size in the borders of the image
 
     min_zyx: List[int]
         Shape of the subarray taken by the maximum
@@ -147,16 +153,17 @@ def identify_initial_spots(
 
     if len(non_zero_indices):
         background_image = cupy.percentile(non_zero_indices, background_percentage)
+        data_block = cupy.maximum(background_image, data_block)
 
-        data_block[data_block < background_image] = background_image
-        data_block = cupy.pad(data_block, pad_size, mode=pad_mode)
+        # data_block[data_block < background_image] = background_image
+        # data_block = cupy.pad(data_block, pad_size, mode=pad_mode) # Taking pad from original data not reflect
 
         LoG_image = -gaussian_laplace(data_block, sigma_zyx)
 
         thresholded_img = cupy.logical_and(  # Logical and door to get truth values
             cupy.logical_and(
                 LoG_image
-                <= mf(  # Maximum filter (non-linear filter) to find local maxima
+                == cupy_maximum_filter(  # Maximum filter (non-linear filter) to find local maxima
                     LoG_image,
                     min_zyx,  # shape that is taken from the input array, at every element position, to define the input to the filter function
                 ),
@@ -199,17 +206,26 @@ def scan(img: ArrayLike, spots: ArrayLike, radius: int):
         Tuple with the spot location and
         image data of shape radius in each axis.
     """
-    output = []
+    val = img.shape
+    prunned_indices = np.all(
+        (spots - radius >= 0) & (spots + radius + 1 <= val), axis=1
+    )
+    spots_prunned = spots[prunned_indices]
 
-    spots = spots.astype(int)
+    if not spots_prunned.size:
+        return np.array([]), np.array([])
 
-    for spot in spots:
-        list_spot = tuple(slice(int(x - radius), int(x + radius + 1)) for x in spot[:3])
-        w = img[list_spot]
-        if np.product(w.shape) == (2 * radius + 1) ** 3:  # just ignore near edge
-            output.append([spot, w])
-
-    return tuple(output)
+    weights = np.stack(
+        [
+            img[
+                sp[0] - radius : sp[0] + radius + 1,
+                sp[1] - radius : sp[1] + radius + 1,
+                sp[2] - radius : sp[2] + radius + 1,
+            ]
+            for sp in spots_prunned
+        ]
+    )
+    return spots_prunned, weights
 
 
 def fit_gaussian(S, fit_sigmas, r):
@@ -239,7 +255,6 @@ def fit_gaussian(S, fit_sigmas, r):
 
     while change > minChange:
         N = intensity_integrated_gaussian3D(guess, fit_sigmas, 2 * r + 1)
-        # print(f"S: {S.shape} and N: {N.shape}")
         int_sum = S * N
         int_sum_sum = int_sum.sum()
         if (
@@ -250,7 +265,7 @@ def fit_gaussian(S, fit_sigmas, r):
             return False
         for i, m in enumerate(mesh):
             guess[i] = (m * int_sum).sum() / int_sum_sum  # estimate for each dimension
-        change = math.sqrt(sum((last - guess) ** 2))
+        change = np.sqrt(sum((last - guess) ** 2))
         iteration += 1
         last = copy(guess)
     intensity = int(int_sum_sum / (N * N).sum())
@@ -265,30 +280,39 @@ def fit_gaussian(S, fit_sigmas, r):
 
 
 def intensity_integrated_gaussian3D(center, sigmas, limit):
-    diff = np.empty((2, 3), object)  # +/- and per dim
-    len_sigmas = len(sigmas)
-    for i in range(len_sigmas):
-        for j, d in enumerate([-0.5, 0.5]):
-            res = (np.arange(limit) + d - center[i]) / math.sqrt(2) / sigmas[i]
-            res_erf = erf(res)
-            if res_erf is not None:
-                diff[j, i] = res_erf
+    """"""
+    # Create an array of shape (2, len(sigmas), limit) with values -0.5 and 0.5
+    d_values = np.array([[-0.5, 0.5]], dtype=np.float32).reshape(2, 1, 1)
 
-    diff = abs(diff[0] - diff[1])
-    return np.prod(np.meshgrid(*diff), 0)
+    # Create an array of shape (2, len(sigmas), limit) with values center[i]
+    center_values = np.array(center, dtype=cupy.float32).reshape(1, -1, 1)
+
+    # Create an array of shape (2, len(sigmas), limit) with values sigmas[i]
+    sigma_values = np.array(sigmas, dtype=np.float32).reshape(1, -1, 1)
+
+    # Compute the argument of the error function
+    res = (np.arange(limit) + d_values - center_values) / np.sqrt(2) / sigma_values
+
+    # Compute the error function
+    res_erf = erf(res)
+
+    # Compute the absolute differences between the error function values for the two sides of the center
+    diff = np.abs(res_erf[0] - res_erf[1])
+    # Compute the product along the first axis
+    return np.prod(np.meshgrid(*diff), axis=0)
 
 
 def traditional_3D_spot_detection(
     data_block: ArrayLike,
     background_percentage: int,
     sigma_zyx: List[int],
-    pad_size: int,
     min_zyx: List[int],
     filt_thresh: int,
     raw_thresh: int,
     logger: logging.Logger,
     context_radius: Optional[int] = 3,
     radius_confidence: Optional[float] = 0.05,
+    eps: Optional[int] = 0,
     verbose: Optional[bool] = False,
 ):
     """
@@ -299,6 +323,18 @@ def traditional_3D_spot_detection(
         1. B. Percentile to get estimated background image.
         1. C. Combination of logical ANDs to filter the LoG image
         using threshold values and non-linear maximum filter.
+    2. Prune identified spots within a certain radius.
+    3. Get a small image (context) within a radius for each spot.
+    4. Fit a 3D gaussian using the context of each spot and leave the
+        ones that are able to converge.
+
+    Returns
+    -------
+    ArrayLike
+        3D ZYX points in the center of the bloby objects.
+        If a segmentation mask is provided, the points will have
+        the form of Z,Y,X,MASK_ID where MASK_ID represents the ID
+        of the segmentation mask in the area where the spot is located.
     """
     puncta = None
 
@@ -307,7 +343,6 @@ def traditional_3D_spot_detection(
         data_block=data_block,
         background_percentage=background_percentage,
         sigma_zyx=sigma_zyx,
-        pad_size=pad_size,
         min_zyx=min_zyx,
         filt_thresh=filt_thresh,
         raw_thresh=raw_thresh,
@@ -318,7 +353,6 @@ def traditional_3D_spot_detection(
         logger.info(
             f"Initial spots time: {initial_spots_end_time - initial_spots_start_time}"
         )
-    len_spots = len(initial_spots) if initial_spots is not None else None
 
     if (
         initial_spots is not None
@@ -329,28 +363,33 @@ def traditional_3D_spot_detection(
         minYX = min_zyx[-1]
 
         prunning_start_time = time()
-        pruned_spots = prune_blobs(initial_spots.get(), minYX + radius_confidence)
+        pruned_spots, _ = prune_blobs(
+            initial_spots.get(), minYX + radius_confidence, eps=eps
+        )
         prunning_end_time = time()
-
         if verbose:
             logger.info(
-                f"Prunning {len(initial_spots)} spots time: {prunning_end_time - prunning_start_time}"
+                f"Prunning spots time: {prunning_end_time - prunning_start_time}"
             )
+
         guassian_laplaced_img_memory = gaussian_laplaced_img.get()
 
         scanning_start_time = time()
-        scanned_spots = scan(guassian_laplaced_img_memory, pruned_spots, context_radius)
+        scanned_spots, scanned_contexts = scan(
+            guassian_laplaced_img_memory, pruned_spots, context_radius
+        )
         scanning_end_time = time()
         if verbose:
             logger.info(
-                f"Prunning spots time: {scanning_end_time - scanning_start_time}"
+                f"Scanning spots time: {scanning_end_time - scanning_start_time}"
             )
 
-        data_block_shape = cupy.asarray(data_block.shape)
         results = []
 
         fit_gau_spots_start_time = time()
-        for coord, context in scanned_spots:
+        for idx in range(0, scanned_spots.shape[0]):
+            coord = scanned_spots[idx]
+            context = scanned_contexts[idx]
 
             out = fit_gaussian(context, sigma_zyx, context_radius)
             if not out:
@@ -358,12 +397,7 @@ def traditional_3D_spot_detection(
 
             center, N, r = out
             center -= [context_radius] * 3
-            unpadded_coord = coord[:3] - pad_size
-            if (
-                True in cupy.less(data_block_shape, unpadded_coord)
-                or np.where(unpadded_coord < 0)[0].shape[0]
-            ):
-                continue
+            unpadded_coord = coord[:3]
 
             results.append(
                 unpadded_coord.tolist() + center.tolist() + [np.linalg.norm(center), r]
@@ -376,11 +410,12 @@ def traditional_3D_spot_detection(
                 f"Fitting gaussian to {len(scanned_spots)} spots time: {fit_gau_spots_end_time - fit_gau_spots_start_time}"
             )
 
-        results_np = np.array(results).astype(int)
+        results_np = np.array(results).astype(np.float32)
 
         if not len(results_np):
             return None
 
-        puncta = results_np[:, :3]
+        # Add limits if we want to ignore the rest e.g., [:, :3] to only zyx pos
+        puncta = results_np
 
     return puncta
