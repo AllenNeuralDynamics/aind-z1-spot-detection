@@ -55,7 +55,7 @@ def run():
             "n_workers": 0,
             "batch_size": 1,
             "axis_pad": axis_pad,
-            "output_folder": output_folder,
+            "output_folder": output_folder.joinpath(data_path.stem),
             "logger": logger,
             "super_chunksize": None,
             "spot_parameters": {
