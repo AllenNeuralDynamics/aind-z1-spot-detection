@@ -47,8 +47,8 @@ def run():
 
         # Data loader params
         puncta_params = {
-            "dataset_path": data_path,
-            "segmentation_mask_path": segmentation_path,
+            "dataset_path": str(data_path),
+            "segmentation_mask_path": str(segmentation_path),
             "multiscale": "0",
             "prediction_chunksize": (128, 128, 128),
             "target_size_mb": 3048,
