@@ -24,7 +24,7 @@ def run():
     utils.create_folder(dest_dir=str(output_folder), verbose=True)
 
     # Data
-    data_channels = list(DATA_FOLDER.glob("channel*.zarr"))
+    data_channels = list(DATA_FOLDER.glob("*ch_*.zarr"))
     segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
     
     if len(data_channels) and len(segmentation_paths):
