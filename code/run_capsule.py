@@ -31,6 +31,8 @@ def run():
         data_path = data_channels[0]
         segmentation_path = segmentation_paths[0]
 
+        output_folder = output_folder.joinpath(data_path.stem)
+
         logger = utils.create_logger(output_log_path=str(output_folder))
 
         logger.info(f"Processing dataset {data_path} with segmentation {segmentation_path}")
@@ -51,11 +53,11 @@ def run():
             "segmentation_mask_path": str(segmentation_path),
             "multiscale": "0",
             "prediction_chunksize": (128, 128, 128),
-            "target_size_mb": 2048,
+            "target_size_mb": 3072,
             "n_workers": 0,
             "batch_size": 1,
             "axis_pad": axis_pad,
-            "output_folder": output_folder.joinpath(data_path.stem),
+            "output_folder": output_folder,
             "logger": logger,
             "super_chunksize": None,
             "spot_parameters": {
