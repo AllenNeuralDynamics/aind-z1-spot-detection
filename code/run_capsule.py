@@ -50,7 +50,7 @@ def run():
             "segmentation_mask_path": str(segmentation_path),
             "multiscale": "0",
             "prediction_chunksize": (128, 128, 128),
-            "target_size_mb": 3072,
+            "target_size_mb": 2048,
             "n_workers": 0,
             "batch_size": 1,
             "axis_pad": axis_pad,
