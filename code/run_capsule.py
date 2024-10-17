@@ -19,10 +19,6 @@ def run():
     # SCRATCH_FOLDER = Path(os.path.abspath("../scratch"))
     DATA_FOLDER = Path(os.path.abspath("../data"))
 
-    # Output folder
-    output_folder = RESULTS_FOLDER
-    utils.create_folder(dest_dir=str(output_folder), verbose=True)
-
     # Data
     data_channels = list(DATA_FOLDER.glob("*ch_*.zarr"))
     segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
@@ -31,7 +27,8 @@ def run():
         data_path = data_channels[0]
         segmentation_path = segmentation_paths[0]
 
-        output_folder = output_folder.joinpath(data_path.stem)
+        output_folder = RESULTS_FOLDER.joinpath(data_path.stem)
+        utils.create_folder(dest_dir=str(output_folder), verbose=True)
 
         logger = utils.create_logger(output_log_path=str(output_folder))
 
