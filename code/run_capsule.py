@@ -24,7 +24,7 @@ def run():
     if not len(spot_dict_path):
         raise FileNotFoundError("No spot channel dictionary was found!")
 
-    spot_dict = utils.read_json_as_dict(spot_dict_path)
+    spot_dict = utils.read_json_as_dict(spot_dict_path[0])
     spot_channel = spot_dict.get("spot_channels")
 
     if spot_channel is None:
