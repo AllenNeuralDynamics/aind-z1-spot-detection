@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import psutil
+import json
 
 
 def profile_resources(
@@ -383,3 +384,29 @@ def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dic
             }
 
     return parsed_metadata
+
+def read_json_as_dict(filepath: str) -> dict:
+    """
+    Reads a json as dictionary.
+
+    Parameters
+    ------------------------
+
+    filepath: PathLike
+        Path where the json is located.
+
+    Returns
+    ------------------------
+
+    dict:
+        Dictionary with the data the json has.
+
+    """
+
+    dictionary = {}
+
+    if os.path.exists(filepath):
+        with open(filepath) as json_file:
+            dictionary = json.load(json_file)
+
+    return dictionary

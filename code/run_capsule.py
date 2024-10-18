@@ -19,8 +19,19 @@ def run():
     # SCRATCH_FOLDER = Path(os.path.abspath("../scratch"))
     DATA_FOLDER = Path(os.path.abspath("../data"))
 
+    spot_dict_path = list(DATA_FOLDER.glob("spot_channel_*.json"))
+    
+    if not len(spot_dict_path):
+        raise FileNotFoundError("No spot channel dictionary was found!")
+
+    spot_dict = utils.read_json_as_dict(spot_dict_path)
+    spot_channel = spot_dict.get("spot_channels")
+
+    if spot_channel is None:
+        raise ValueError("Please, provide a spot channel in the dictionary")
+
     # Data
-    data_channels = list(DATA_FOLDER.glob("*ch_*.zarr"))
+    data_channels = list(DATA_FOLDER.glob(f"*ch_{spot_channel}.zarr"))
     segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
     
     if len(data_channels) and len(segmentation_paths):
