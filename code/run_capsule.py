@@ -31,7 +31,7 @@ def run():
         raise ValueError("Please, provide a spot channel in the dictionary")
 
     # Data
-    data_channels = list(DATA_FOLDER.glob(f"*ch_{spot_channel}.zarr"))
+    data_channels = list(DATA_FOLDER.glob(f"*{spot_channel}.zarr"))
     segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
     
     if len(data_channels) and len(segmentation_paths):
