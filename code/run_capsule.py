@@ -38,7 +38,7 @@ def run():
         data_path = data_channels[0]
         segmentation_path = segmentation_paths[0]
 
-        output_folder = RESULTS_FOLDER.joinpath(data_path.stem)
+        output_folder = RESULTS_FOLDER.joinpath(f"{data_path.stem}_spots")
         utils.create_folder(dest_dir=str(output_folder), verbose=True)
 
         logger = utils.create_logger(output_log_path=str(output_folder))
