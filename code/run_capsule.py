@@ -8,6 +8,25 @@ from pathlib import Path
 from puncta_detection.detect import z1_puncta_detection
 from puncta_detection.utils import utils
 
+def strip_all_suffixes(path: Path) -> str:
+    """
+    Strips all suffixes from path
+
+    parameters
+    ----------
+    path: Path
+        Dataset path
+
+    Returns
+    -------
+    str
+        String with all stripped suffixes
+    """
+    name = path.name
+    for suffix in path.suffixes:
+        name = name[: -len(suffix)]
+    return name
+
 
 def run():
     """
@@ -38,12 +57,13 @@ def run():
         data_path = data_channels[0]
         segmentation_path = segmentation_paths[0]
 
-        output_folder = RESULTS_FOLDER.joinpath(f"{data_path.stem}_spots")
+        stripped_suffixes = strip_all_suffixes(path=data_path)
+        output_folder = RESULTS_FOLDER.joinpath(f"{stripped_suffixes}_spots")
         utils.create_folder(dest_dir=str(output_folder), verbose=True)
 
         logger = utils.create_logger(output_log_path=str(output_folder))
 
-        logger.info(f"Processing dataset {data_path} with segmentation {segmentation_path}")
+        logger.info(f"Processing dataset {data_path} with segmentation {segmentation_path}. {stripped_suffixes}")
         # Puncta detection parameters
 
         sigma_zyx = [1.8, 1.0, 1.0]
