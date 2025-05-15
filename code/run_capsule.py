@@ -86,7 +86,7 @@ def run():
         z1_puncta_detection(**puncta_params)
 
     else:
-        raise FileNotFoundError("There are no image channels or segmentation data inside of the data folder.")
+        raise FileNotFoundError(f"There are no image channels or segmentation data inside of the data folder: {list(DATA_FOLDER.glob('*'))}")
 
 if __name__ == "__main__":
     # cProfile.run('main()', filename="/results/compute_costs.dat")
