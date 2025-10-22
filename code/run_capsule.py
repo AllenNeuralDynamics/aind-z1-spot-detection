@@ -51,11 +51,11 @@ def run():
 
     # Data
     data_channels = list(DATA_FOLDER.glob(f"*{spot_channel}*.zarr"))
-    segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
+    # segmentation_paths = list(DATA_FOLDER.glob("segmentation_*.zarr"))
     
     if len(data_channels) and len(segmentation_paths):
         data_path = data_channels[0]
-        segmentation_path = segmentation_paths[0]
+        # segmentation_path = segmentation_paths[0]
 
         stripped_suffixes = strip_all_suffixes(path=data_path)
         output_folder = RESULTS_FOLDER.joinpath(f"{stripped_suffixes}_spots")
@@ -63,7 +63,7 @@ def run():
 
         logger = utils.create_logger(output_log_path=str(output_folder))
 
-        logger.info(f"Processing dataset {data_path} with segmentation {segmentation_path}. {stripped_suffixes}")
+        logger.info(f"Processing dataset {data_path} without segmentation . {stripped_suffixes}")
         # Puncta detection parameters
 
         sigma_zyx = [1.8, 1.0, 1.0]
@@ -78,7 +78,7 @@ def run():
         # Data loader params
         puncta_params = {
             "dataset_path": str(data_path),
-            "segmentation_mask_path": str(segmentation_path),
+            # "segmentation_mask_path": str(segmentation_path),
             "multiscale": "0",
             "prediction_chunksize": (128, 128, 128),
             "target_size_mb": 2048,
