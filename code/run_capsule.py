@@ -152,6 +152,48 @@ def transform_spots_to_global_coordinates(
     return spots_global
 
 
+def cleanup_gpu_memory(logger):
+    """
+    Clean up GPU memory and CUDA context between tiles.
+    
+    This is critical when processing multiple tiles sequentially to prevent
+    CUDA initialization errors on subsequent tiles.
+    
+    Parameters
+    ----------
+    logger : logging.Logger
+        Logger instance
+    """
+    import gc
+    
+    try:
+        # Import CuPy if available
+        import cupy as cp
+        
+        logger.info("Cleaning up GPU memory...")
+        
+        # Clear CuPy memory pool
+        mempool = cp.get_default_memory_pool()
+        pinned_mempool = cp.get_default_pinned_memory_pool()
+        
+        # Free all unused blocks
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+        
+        # Synchronize all CUDA streams
+        cp.cuda.Stream.null.synchronize()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        logger.info("GPU memory cleanup complete")
+        
+    except ImportError:
+        logger.warning("CuPy not available - skipping GPU cleanup")
+    except Exception as e:
+        logger.warning(f"Error during GPU cleanup (non-fatal): {e}")
+
+
 def process_single_tile(
     data_path: Path,
     tile_info: Dict,
@@ -197,7 +239,8 @@ def process_single_tile(
         f"tile_{tile_idx:03d}_{tile_name}"
     )
     utils.create_folder(dest_dir=str(tile_output_folder), verbose=True)
-
+    
+    
     # Get tile dimensions for coordinate transformation
     try:
         tile_dimensions = get_tile_dimensions(data_path, multiscale=multiscale)
@@ -227,6 +270,10 @@ def process_single_tile(
         main_logger.info(f"Starting spot detection for tile {tile_idx}")
         z1_puncta_detection(**tile_puncta_params)
         main_logger.info(f"Completed spot detection for tile {tile_idx}")
+        
+        # CRITICAL: Clean up GPU memory immediately after processing
+        # This prevents CUDA initialization errors on subsequent tiles
+        cleanup_gpu_memory(main_logger)
         
         # Load the generated spots CSV
         tile_spots_csv = tile_output_folder / "spots.csv"
@@ -275,6 +322,13 @@ def process_single_tile(
         )
         tile_metadata['error'] = str(e)
         tile_metadata['n_spots'] = 0
+        
+        # Still try to clean up GPU even after error
+        try:
+            cleanup_gpu_memory(main_logger)
+        except:
+            pass
+            
         return None, tile_metadata
 
 
