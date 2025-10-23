@@ -456,7 +456,7 @@ def run():
     
     # Create main logger
     main_logger = utils.create_logger(
-        output_log_path=str(main_output_folder / "main_processing.log")
+        output_log_path=str(main_output_folder)
     )
     
     main_logger.info(f"Processing mode: {processing_mode}")
