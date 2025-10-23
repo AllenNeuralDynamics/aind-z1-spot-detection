@@ -200,7 +200,7 @@ def process_single_tile(
     
     # Create tile-specific logger
     tile_logger = utils.create_logger(
-        output_log_path=str(tile_output_folder / "tile_processing.log")
+        output_log_path=str(tile_output_folder)
     )
     
     # Get tile dimensions for coordinate transformation
