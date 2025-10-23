@@ -493,13 +493,14 @@ def run():
     processing_mode = spot_dict.get("processing_mode", "single_tile")
     tiles_info = spot_dict.get("tiles", [])
     n_tiles = spot_dict.get("n_tiles", 0)
-    
+    tile_name = tiles_info[0].get("tile_name", "tile")
+
     # Setup main output folder
     if processing_mode == "multi_tile":
         main_output_folder = RESULTS_FOLDER.joinpath(f"ch_{spot_channel}_multi_tile_spots")
     else:
         # Backward compatibility: single tile processing
-        main_output_folder = RESULTS_FOLDER.joinpath(f"ch_{spot_channel}_spots")
+        main_output_folder = RESULTS_FOLDER.joinpath(f"ch_{spot_channel}_spots_{tile_name}")
     
     utils.create_folder(dest_dir=str(main_output_folder), verbose=True)
     
