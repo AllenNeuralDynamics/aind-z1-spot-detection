@@ -500,7 +500,7 @@ def run():
         main_output_folder = RESULTS_FOLDER.joinpath(f"ch_{spot_channel}_multi_tile_spots")
     else:
         # Backward compatibility: single tile processing
-        main_output_folder = RESULTS_FOLDER.joinpath(f"ch_{spot_channel}_spots_{tile_name}")
+        main_output_folder = RESULTS_FOLDER.joinpath(f"{tile_name}_ch_{spot_channel}_spots")
     
     utils.create_folder(dest_dir=str(main_output_folder), verbose=True)
     
