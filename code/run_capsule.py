@@ -197,12 +197,7 @@ def process_single_tile(
         f"tile_{tile_idx:03d}_{tile_name}"
     )
     utils.create_folder(dest_dir=str(tile_output_folder), verbose=True)
-    
-    # Create tile-specific logger
-    tile_logger = utils.create_logger(
-        output_log_path=str(tile_output_folder)
-    )
-    
+
     # Get tile dimensions for coordinate transformation
     try:
         tile_dimensions = get_tile_dimensions(data_path, multiscale=multiscale)
@@ -225,7 +220,7 @@ def process_single_tile(
     tile_puncta_params = base_puncta_params.copy()
     tile_puncta_params['dataset_path'] = str(data_path)
     tile_puncta_params['output_folder'] = tile_output_folder
-    tile_puncta_params['logger'] = tile_logger
+    tile_puncta_params['logger'] = main_logger
     
     try:
         # Run spot detection
