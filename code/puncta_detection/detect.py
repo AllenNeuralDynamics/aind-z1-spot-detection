@@ -568,6 +568,14 @@ def z1_puncta_detection(
 
     if spots_global_coordinate is None:
         logger.info("No spots found!")
+        #saving empty csv
+        columns = ["Z", "Y", "X", "Z_center", "Y_center", "X_center", "dist", "r"]
+        empty_spots_df = pd.DataFrame(columns=columns)
+        logger.info("Saving empty DF now!")
+        empty_spots_df.to_csv(
+            f"{output_folder}/spots.csv",
+            index=False,
+        )
 
     else:
         spots_global_coordinate = spots_global_coordinate.astype(np.float32)
