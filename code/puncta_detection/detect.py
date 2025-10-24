@@ -576,6 +576,7 @@ def z1_puncta_detection(
             f"{output_folder}/spots.csv",
             index=False,
         )
+        np.save(f"{output_folder}/spots.npy", np.array(spots_global_coordinate))
 
     else:
         spots_global_coordinate = spots_global_coordinate.astype(np.float32)
