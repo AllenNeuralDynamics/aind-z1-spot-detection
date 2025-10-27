@@ -420,6 +420,9 @@ def z1_puncta_detection(
             .as_dask_array()
         )
 
+    # apply forward camera alignment transforms to each channel
+    
+
     image_metadata = (
         ImageReaderFactory()
         .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)
