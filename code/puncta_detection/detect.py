@@ -422,7 +422,7 @@ def z1_puncta_detection(
         )
 
     # apply forward camera alignment transforms to each channel
-    
+    lazy_data = apply_camera_alignment_to_tile_array(lazy_data, Path(dataset_path).name, xml_path)
 
     image_metadata = (
         ImageReaderFactory()
