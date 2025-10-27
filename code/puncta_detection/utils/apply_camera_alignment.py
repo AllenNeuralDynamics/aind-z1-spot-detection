@@ -4,10 +4,10 @@ import numpy as np
 import boto3
 import xmltodict
 from scipy import ndimage
-from typing import Optional
+from collections import defaultdict, OrderedDict
+
 
 def apply_camera_alignment_to_tile_array(tile_array: da.array, tile_name: str, xml_path: str): 
-    channel = extract_channel_from_tile_path(tile_path)
 
     transforms = None
     if xml_path:
@@ -19,6 +19,7 @@ def apply_camera_alignment_to_tile_array(tile_array: da.array, tile_name: str, x
 
 
     tile_array = apply_transform_to_tile(tile_array, tile_name, transforms, xml_path)
+    return tile_array
 
 
 def load_xml(xml_path)-> OrderedDict:

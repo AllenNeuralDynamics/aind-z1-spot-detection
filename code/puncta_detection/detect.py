@@ -27,6 +27,7 @@ from .traditional_detection.puncta_detection import (
     prune_blobs, traditional_3D_spot_detection)
 from .utils import utils
 from .utils.generate_precomputed_format import generate_precomputed_spots
+from .utils.apply_camera_alignment import apply_camera_alignment_to_tile_array
 
 
 def apply_mask(data: ArrayLike, mask: ArrayLike = None) -> ArrayLike:
