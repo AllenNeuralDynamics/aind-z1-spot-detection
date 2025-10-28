@@ -312,6 +312,7 @@ def z1_puncta_detection(
     logger: logging.Logger,
     super_chunksize: Optional[Tuple[int, ...]] = None,
     segmentation_mask_path: Optional[PathLike] = None,
+    xml_path: PathLike = None,
 ):
     """
     Chunked puncta detection
@@ -421,9 +422,12 @@ def z1_puncta_detection(
             .as_dask_array()
         )
 
-    # apply forward camera alignment transforms to each channel
-    lazy_data = apply_camera_alignment_to_tile_array(lazy_data, Path(dataset_path).name, xml_path)
-
+    if xml_path is not None: 
+        # apply forward camera alignment transforms to each channel
+        lazy_data = apply_camera_alignment_to_tile_array(lazy_data, Path(dataset_path).name, xml_path)
+    else: 
+        xml_path = Path(dataset_path).joinpath('image_tile_alignment/stitching_cam_alignment_spot_channels.xml')
+        lazy_data = apply_camera_alignment_to_tile_array(lazy_data, Path(dataset_path).name, xml_path)
     image_metadata = (
         ImageReaderFactory()
         .create(data_path=dataset_path, parse_path=False, multiscale=multiscale)

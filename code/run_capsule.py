@@ -542,6 +542,7 @@ def run():
             "context_radius": context_radius,
             "radius_confidence": radius_confidence,
         },
+        "xml_path": DATA_FOLDER.joinpath('image_tile_alignment/stitching_cam_alignment_spot_channels.xml')
     }
 
     # ========================================================================
