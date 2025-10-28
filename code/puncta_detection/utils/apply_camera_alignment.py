@@ -24,7 +24,7 @@ def apply_camera_alignment_to_tile_array(tile_array: da.array, tile_name: str, x
 
 def load_xml(xml_path)-> OrderedDict:
     # Check if it's an S3 path
-    if xml_path.startswith('s3://'):
+    if str(xml_path).startswith('s3://'):
         # Parse S3 path
         s3_path = xml_path.replace("s3://", "")
         bucket_name, key = s3_path.split("/", 1) 
