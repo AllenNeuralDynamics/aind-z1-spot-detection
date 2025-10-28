@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
     matplotlib==3.8.2 \
     scipy==1.10.1 \
     cupy-cuda11x==13.0.0 \
+    torch==2.2.2 \
     boto3 \
     xmltodict \
     dask[array] \
