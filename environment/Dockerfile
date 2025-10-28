@@ -12,7 +12,7 @@ ARG new_pred_version="1.0.0"
 RUN pip install --no-cache-dir \
     jupyterlab \
     git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git \
-    numpy==1.24.4 \
+    numpy==1.26.4 \
     scikit-image==0.22.0 \
     matplotlib==3.8.2 \
     scipy==1.10.1 \
