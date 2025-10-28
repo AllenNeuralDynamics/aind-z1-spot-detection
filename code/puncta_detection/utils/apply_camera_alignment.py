@@ -264,6 +264,9 @@ def apply_transform_to_tile(tile_array: da.Array, tile_name: str, transforms: di
         shuffled_cols = shuffled_rows[:, [2, 1, 0, 3]]
         return shuffled_cols
     
+    print(f'tile name {tile_name}')
+    print(f'transforms {transforms}')
+
     # Find the appropriate transform for this tile
     if tile_name in transforms:
         transform_matrix = transforms[tile_name]
