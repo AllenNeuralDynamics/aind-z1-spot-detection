@@ -19,6 +19,8 @@ def apply_camera_alignment_to_tile_array(tile_array: da.array, tile_name: str, x
 
 
     tile_array = apply_transform_to_tile(tile_array, tile_name, transforms, xml_path)
+    chunk_size = (1,1,128,128,128)
+    tile_array=tile_array.rechunk(chunk_size)
     return tile_array
 
 
