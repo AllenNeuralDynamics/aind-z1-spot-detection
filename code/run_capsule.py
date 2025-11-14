@@ -475,11 +475,16 @@ def run():
 
     # Code Ocean folders
     RESULTS_FOLDER = Path(os.path.abspath("../results"))
+    # RESULTS_FOLDER = Path(os.path.abspath("/results"))
+
     DATA_FOLDER = Path(os.path.abspath("../data"))
+    # DATA_FOLDER = Path(os.path.abspath("/data"))
 
     # Load spot channel configuration (created by dispatcher)
     spot_dict_path = list(DATA_FOLDER.glob("spot_channel_*.json"))
-    
+
+    # DATA_FOLDER = Path(os.path.abspath("/data")).joinpath('HCR_799211_2025-10-02_14-10-00_processed_2025-11-06_22-51-21')
+
     if not len(spot_dict_path):
         raise FileNotFoundError("No spot channel dictionary was found!")
 
@@ -590,7 +595,7 @@ def run():
                 f"No zarr files found for channel {spot_channel} in {DATA_FOLDER}"
             )
         
-        data_path = data_channels[0]
+        data_path = tiles_info[0]['path']
         main_logger.info(f"Processing single file: {data_path}")
         
         # Run detection using original approach
